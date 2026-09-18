@@ -1,6 +1,7 @@
 # ChatGPT MCP for Self-Hosted GitLab Repositories
 
 [![CI](https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos/actions/workflows/ci.yml/badge.svg)](https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 A small, **read-only** MCP server that lets ChatGPT inspect repositories on a self-managed GitLab instance, including instances that are only reachable from your laptop, VPN, or private network.
 
@@ -64,6 +65,7 @@ If the Inspector tests work, connect the same stdio server to ChatGPT using Open
 - **English setup guide:** [docs/SETUP_TUTORIAL.md](docs/SETUP_TUTORIAL.md)
 - **中文配置教程:** [docs/SETUP_TUTORIAL_CN.md](docs/SETUP_TUTORIAL_CN.md)
 - **Troubleshooting:** [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- **v0.2 write-access design:** [docs/V0.2_WRITE_ACCESS_DESIGN.md](docs/V0.2_WRITE_ACCESS_DESIGN.md)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
 ## Security defaults
@@ -89,6 +91,15 @@ The ChatGPT-to-MCP side still uses OpenAI Secure MCP Tunnel over outbound HTTPS.
 - A self-managed GitLab token with read permissions
 - ChatGPT Developer Mode with custom MCP access appropriate to your plan
 - OpenAI [`tunnel-client`](https://github.com/openai/tunnel-client) for private/local MCP servers
+
+## Roadmap
+
+- **v0.1.x:** read-only GitLab inspection through ChatGPT.
+- **v0.2.0:** controlled local worktrees, code edits, build/test execution, commit, push, and Merge Request creation. See the [v0.2 design proposal](docs/V0.2_WRITE_ACCESS_DESIGN.md).
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Status
 
