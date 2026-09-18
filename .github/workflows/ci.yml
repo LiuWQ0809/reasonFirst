@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, v0.2.0-dev]
+    branches: [main, v0.2.0-dev, v0.2.1-cross-platform]
   pull_request:
 
 permissions:
@@ -35,9 +35,7 @@ jobs:
           uv run gitlab-agent --help
 
       - name: Compile Python sources
-        run: |
-          uv run python -m py_compile server.py smoke_test.py
-          uv run python -m py_compile src/gitlab_agent/*.py tests/*.py
+        run: uv run python -m compileall -q server.py smoke_test.py src/gitlab_agent tests
 
       - name: Run v0.2 local workflow tests
         run: uv run python -m unittest discover -s tests -v
@@ -52,3 +50,43 @@ jobs:
         run: |
           test ! -f .env
           uv run python scripts/check_repo_secrets.py --history
+
+
+  cross-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: python -m pip install --upgrade uv
+
+      - name: Resolve dependencies
+        run: uv sync
+
+      - name: Verify packaged CLIs
+        run: |
+          uv run actual-coder --help
+          uv run gitlab-agent --help
+
+      - name: Compile Python sources
+        run: uv run python -m compileall -q server.py smoke_test.py src/gitlab_agent tests
+
+      - name: Parse native Windows PowerShell scripts
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          [scriptblock]::Create((Get-Content -Raw .\scripts\install_user.ps1)) | Out-Null
+          [scriptblock]::Create((Get-Content -Raw .\run_mcp.ps1)) | Out-Null
+
+      - name: Run workflow tests
+        run: uv run python -m unittest discover -s tests -v
