@@ -1,5 +1,7 @@
 # ChatGPT MCP for Self-Hosted GitLab Repositories
 
+[![CI](https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos/actions/workflows/ci.yml/badge.svg)](https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos/actions/workflows/ci.yml)
+
 A small, **read-only** MCP server that lets ChatGPT inspect repositories on a self-managed GitLab instance, including instances that are only reachable from your laptop, VPN, or private network.
 
 The key idea is:
@@ -57,9 +59,12 @@ uv run mcp dev server.py
 
 If the Inspector tests work, connect the same stdio server to ChatGPT using OpenAI Secure MCP Tunnel.
 
-**Full walkthrough:** [docs/SETUP_TUTORIAL.md](docs/SETUP_TUTORIAL.md)
+## Documentation
 
-**Troubleshooting:** [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- **English setup guide:** [docs/SETUP_TUTORIAL.md](docs/SETUP_TUTORIAL.md)
+- **中文配置教程:** [docs/SETUP_TUTORIAL_CN.md](docs/SETUP_TUTORIAL_CN.md)
+- **Troubleshooting:** [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
 ## Security defaults
 
@@ -86,5 +91,7 @@ The ChatGPT-to-MCP side still uses OpenAI Secure MCP Tunnel over outbound HTTPS.
 - OpenAI [`tunnel-client`](https://github.com/openai/tunnel-client) for private/local MCP servers
 
 ## Status
+
+Initial public version: **0.1.0**.
 
 This project started as a working setup for an internal self-hosted GitLab and has been generalized so the repository does not contain deployment secrets or a hard-coded private hostname.
