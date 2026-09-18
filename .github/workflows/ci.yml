@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v0.2.0-dev]
   pull_request:
 
 permissions:
@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,11 +28,27 @@ jobs:
       - name: Resolve dependencies
         run: uv sync
 
-      - name: Compile Python sources
-        run: uv run python -m py_compile server.py smoke_test.py
+      - name: Verify packaged CLIs
+        run: |
+          uv run actual-coder --help
+          uv run codingagent --help
+          uv run gitlab-agent --help
 
-      - name: Check that secrets are not committed
+      - name: Compile Python sources
+        run: |
+          uv run python -m py_compile server.py smoke_test.py
+          uv run python -m py_compile src/gitlab_agent/*.py tests/*.py
+
+      - name: Run v0.2 local workflow tests
+        run: uv run python -m unittest discover -s tests -v
+
+      - name: Enforce zero OpenAI model API usage in project code
         shell: bash
         run: |
+          ! grep -R --include='*.py' -E '(^|[[:space:]])(from[[:space:]]+openai|import[[:space:]]+openai)|api\.openai\.com/v1' .
+          ! grep -Ei '^[[:space:]]*"openai([<=>~!]|")' pyproject.toml
+
+      - name: Scan tracked files and Git history for secrets
+        run: |
           test ! -f .env
-          ! grep -R --exclude-dir=.git --exclude='.env.example' -E 'glpat-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}' .
+          uv run python scripts/check_repo_secrets.py --history
