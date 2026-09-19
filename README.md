@@ -1,56 +1,157 @@
-# ChatGPT MCP for Self-Hosted GitLab + ActualCoder
+# ReasonFirst
 
-[![CI](https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos/actions/workflows/ci.yml/badge.svg)](https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos/actions/workflows/ci.yml)
+> **Reasoning-first coding orchestration**
+>
+> **Use your strongest reasoning model for reasoning. Let coding agents do the coding.**
+
+[![CI](https://github.com/phoenixjyb/reasonFirst/actions/workflows/ci.yml/badge.svg)](https://github.com/phoenixjyb/reasonFirst/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-A practical toolchain for working with **private/self-hosted GitLab** from ChatGPT and local coding agents without exposing GitLab directly to the public Internet.
+ReasonFirst connects **high-capability conversational reasoning** with **replaceable coding agents** inside a controlled software-engineering workflow.
 
-The repository has two complementary layers:
+The core idea is to separate two different jobs:
 
-1. **Read-only ChatGPT MCP** — lets normal ChatGPT conversations inspect GitLab repositories, merge requests, pipelines, jobs, and logs.
-2. **ActualCoder** — creates isolated local Git worktrees and hands them to Codex CLI or GitHub Copilot CLI while `gitlab-agent` owns the GitLab branch/MR lifecycle.
+- **Reasoning** — research, architecture, task decomposition, debugging strategy, review, and interpreting real engineering evidence.
+- **Execution** — repository inspection, file edits, build/test iterations, and implementation work.
 
-The repository itself does **not** call OpenAI model APIs.
+A strong chat/reasoning model can lead the work while coding agents such as **Codex CLI** and **GitHub Copilot CLI** handle high-volume implementation. **ActualCoder** is the execution/orchestration engine that connects those layers to isolated worktrees, validation, Git state, Merge Requests, and CI feedback.
+
+This lets users make deliberate use of the subscriptions and tools they already have:
+
+```text
+high-value reasoning capacity
+        ↓
+architecture / planning / debugging / review
+
+coding-agent entitlement / quota
+        ↓
+inspection / editing / tests / iteration
+
+local tools + SCM + CI
+        ↓
+deterministic execution and evidence
+```
+
+> **Spend reasoning capacity on reasoning. Spend coding-agent quota on coding.**
+
+ReasonFirst is **not a model proxy** and does not call OpenAI model inference APIs. Each reasoning/coding backend continues to use the user's own authenticated experience, CLI session, subscription, or entitlement.
+
+For the full rationale, see **[ReasonFirst Design Philosophy](docs/DESIGN_PHILOSOPHY.md)**.
 
 ## Architecture
 
+ReasonFirst separates software work into four planes:
+
 ```text
-Normal ChatGPT
-    │
-    │ read-only MCP
-    ▼
-Secure MCP Tunnel
-    │
-    ▼
-server.py
-    │
-    ▼
-Self-hosted GitLab
-
-
-Codex CLI ───────┐
-Copilot CLI ─────┼──► ActualCoder
-future agents ───┘        │
-                          ▼
-                    gitlab-agent
-                          │
-                          ├── isolated worktree
-                          ├── build / test
-                          ├── diff
-                          ├── commit
-                          ├── push / push-update
-                          ├── create Merge Request
-                          └── recover existing MR/branch
-                               │
-                               ▼
-                       Self-hosted GitLab
+                         Human
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │  Reasoning Plane  │
+                 │                   │
+                 │ ChatGPT / other   │
+                 │ strong reasoning  │
+                 │                   │
+                 │ research          │
+                 │ architecture      │
+                 │ planning          │
+                 │ debugging         │
+                 │ review            │
+                 └─────────┬─────────┘
+                           │ task / constraints
+                           ▼
+                 ┌───────────────────┐
+                 │   Control Plane   │
+                 │                   │
+                 │   ReasonFirst     │
+                 │   ActualCoder     │
+                 │   gitlab-agent    │
+                 └─────────┬─────────┘
+                           │ controlled handoff
+              ┌────────────┴────────────┐
+              ▼                         ▼
+        ┌───────────┐             ┌───────────┐
+        │ Codex CLI │             │ Copilot   │
+        │           │             │ CLI       │
+        └─────┬─────┘             └─────┬─────┘
+              │      Execution Plane     │
+              └────────────┬─────────────┘
+                           ▼
+                   isolated worktree
+                           │
+                    edit / build / test
+                           │
+                           ▼
+                    Git / MR / CI
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │  Feedback Plane   │
+                 │                   │
+                 │ diff / tests / CI │
+                 │ review evidence   │
+                 └─────────┬─────────┘
+                           │
+                           └──────────────► reason again
 ```
 
-## Recommended team entry point
+### Current implementation
 
-For team installation, configuration, daily workflow, MR recovery, security rules, and troubleshooting, use:
+Today, GitLab is the first fully implemented SCM/CI adapter:
 
-**[团队安装、配置与使用完整指南（中文）](docs/TEAM_GUIDE_CN.md)**
+```text
+Reasoning Plane
+  ChatGPT
+      │
+      ├── optional read-only GitLab MCP bridge
+      │
+      ▼
+ReasonFirst
+  ActualCoder
+      │
+      ├── Codex CLI
+      ├── GitHub Copilot CLI
+      └── future coding backends
+      │
+      ▼
+gitlab-agent
+      │
+      ├── isolated worktree
+      ├── build / test
+      ├── diff / review gates
+      ├── commit
+      ├── push / push-update
+      ├── Merge Request lifecycle
+      └── GitLab CI feedback
+```
+
+GitLab is an implementation target, **not the product identity**. The architectural goal is to keep reasoning interfaces, coding backends, and SCM/CI adapters replaceable.
+
+## Naming / components
+
+- **ReasonFirst** — the project and product: reasoning-first coding orchestration.
+- **ActualCoder / `actual-coder`** — the high-level local coding orchestration engine and CLI.
+- **`gitlab-agent`** — the lower-level workspace/Git/GitLab control plane.
+- **Codex / Copilot** — current coding backends; replaceable execution workers.
+- **Read-only GitLab MCP** — optional bridge that lets the reasoning interface inspect private/self-hosted GitLab.
+
+### Compatibility names kept in v0.3
+
+The public product/repository name becomes **ReasonFirst**, but several internal names intentionally remain unchanged for compatibility with existing installations:
+
+- CLI: `actual-coder` and `gitlab-agent`;
+- Python package/module: `gitlab_agent`;
+- Python distribution name: `chatgpt-selfhosted-gitlab-mcp`;
+- user config: `~/.config/gitlab-agent/`;
+- existing workspace root defaults such as `~/.local/share/chatgpt-gitlab-mcp/`.
+
+Renaming those would require state/install migration and is better handled as an explicit later compatibility change rather than mixed into the repository-brand rename.
+
+## Onboarding
+
+For installation, configuration, daily workflow, MR recovery, security rules, and troubleshooting, start here:
+
+**[ReasonFirst Onboarding Guide（中文）](docs/ONBOARDING_GUIDE_CN.md)**
 
 For team members using ChatGPT Pro + Secure MCP Tunnel, including Tunnel ID / Runtime API Key setup and OS-specific credential storage:
 
@@ -58,6 +159,7 @@ For team members using ChatGPT Pro + Secure MCP Tunnel, including Tunnel ID / Ru
 
 Other references:
 
+- [ReasonFirst Design Philosophy](docs/DESIGN_PHILOSOPHY.md)
 - [ActualCoder Quickstart](docs/ACTUAL_CODER_QUICKSTART.md)
 - [ChatGPT MCP setup — English](docs/SETUP_TUTORIAL.md)
 - [ChatGPT MCP 配置教程 — 中文](docs/SETUP_TUTORIAL_CN.md)
@@ -68,7 +170,7 @@ Other references:
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 
-## Quick start: ActualCoder
+## Quick start: ReasonFirst / ActualCoder
 
 Requirements:
 
@@ -79,11 +181,20 @@ Requirements:
 - network access to the target GitLab;
 - at least one coding backend: Codex CLI or GitHub Copilot CLI.
 
+Existing clones created before the ReasonFirst rename should update their remote once:
+
+```bash
+git remote set-url origin https://github.com/phoenixjyb/reasonFirst.git
+git remote -v
+```
+
+GitHub redirects the previous repository URL, but updating the remote keeps local/team documentation unambiguous.
+
 Clone and prepare on macOS/Linux:
 
 ```bash
-git clone https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos.git
-cd chatgptMCPforOwnGitlabRepos
+git clone https://github.com/phoenixjyb/reasonFirst.git
+cd reasonFirst
 
 cp .env.example .env
 chmod 600 .env
@@ -96,8 +207,8 @@ bash scripts/install_user.sh
 On native Windows PowerShell:
 
 ```powershell
-git clone https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos.git
-Set-Location chatgptMCPforOwnGitlabRepos
+git clone https://github.com/phoenixjyb/reasonFirst.git
+Set-Location reasonFirst
 
 Copy-Item .env.example .env
 # edit .env
@@ -424,10 +535,11 @@ gitlab-agent
 
 ## Current status
 
-- `v0.1.0`: read-only ChatGPT MCP release.
-- `main`: recommended team-consumption branch.
-- `main`: recommended stable team-consumption branch.
+- **ReasonFirst** is the project/product identity.
+- **ActualCoder** remains the stable orchestration CLI/engine.
+- `main` is the recommended stable team-consumption branch.
 - Current package version: `0.3.0`.
+- `v0.1.0` began as a read-only ChatGPT ↔ self-hosted GitLab MCP; v0.3 evolved into the broader ReasonFirst architecture.
 - v0.3 delivers `doctor`, repository-local project contracts, project-aware auto backend selection, `start`, controlled `finish`, and GitLab CI feedback / `resume --from-ci`.
 - Real deployment validation has covered:
   - isolated workspace creation;

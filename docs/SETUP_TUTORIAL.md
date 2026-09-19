@@ -1,6 +1,6 @@
-# Tutorial: Connect ChatGPT to a Private / Self-Hosted GitLab with MCP
+# ReasonFirst Tutorial: Connect ChatGPT to a Private / Self-Hosted GitLab with MCP
 
-> This document covers the **read-only ChatGPT MCP** path. For the local coding workflow, see [ActualCoder Quickstart](ACTUAL_CODER_QUICKSTART.md). Team members who read Chinese should use [TEAM_GUIDE_CN.md](TEAM_GUIDE_CN.md) as the main installation/usage guide.
+> This document covers the **read-only GitLab bridge** used by ReasonFirst's Reasoning Plane. For the local coding workflow, see [ActualCoder Quickstart](ACTUAL_CODER_QUICKSTART.md). For the product philosophy, see [ReasonFirst Design Philosophy](DESIGN_PHILOSOPHY.md). Team members who read Chinese should use [ONBOARDING_GUIDE_CN.md](ONBOARDING_GUIDE_CN.md) as the main onboarding and usage guide.
 
 This tutorial shows how to connect a self-managed GitLab to ordinary ChatGPT conversations without exposing the GitLab instance directly to the public Internet.
 
@@ -60,8 +60,8 @@ Useful official documentation:
 ## 2. Clone and install
 
 ```bash
-git clone https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos.git
-cd chatgptMCPforOwnGitlabRepos
+git clone https://github.com/phoenixjyb/reasonFirst.git
+cd reasonFirst
 
 uv sync
 ```
@@ -235,7 +235,7 @@ tunnel-client init \
   --sample sample_mcp_stdio_local \
   --profile selfhosted-gitlab \
   --tunnel-id tunnel_YOUR_ACTUAL_ID \
-  --mcp-command "/absolute/path/to/chatgptMCPforOwnGitlabRepos/run_mcp.sh"
+  --mcp-command "/absolute/path/to/reasonfirst/run_mcp.sh"
 ```
 
 The current working directory does not matter because `--mcp-command` is an absolute path and `run_mcp.sh` changes into its own directory.

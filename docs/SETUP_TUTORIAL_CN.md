@@ -1,6 +1,6 @@
-# 中文教程：让 ChatGPT 直接读取私有 / 自建 GitLab
+# ReasonFirst 中文教程：让 ChatGPT 直接读取私有 / 自建 GitLab
 
-> 本文只讲 **ChatGPT 只读 MCP**。团队日常真实 coding（ActualCoder + Codex/Copilot + GitLab MR）请优先阅读 [TEAM_GUIDE_CN.md](TEAM_GUIDE_CN.md)。
+> 本文只讲 ReasonFirst **Reasoning Plane 的 ChatGPT 只读 GitLab MCP bridge**。团队日常真实 coding（ActualCoder + Codex/Copilot + GitLab MR）请优先阅读 [ONBOARDING_GUIDE_CN.md](ONBOARDING_GUIDE_CN.md)；整体设计理念见 [ReasonFirst Design Philosophy](DESIGN_PHILOSOPHY.md)。
 
 这套方案适合 **GitLab 部署在公司内网、VPN 或本机网络中，无法直接被公网访问** 的场景。
 
@@ -47,8 +47,8 @@ brew install uv
 ## 2. 克隆项目
 
 ```bash
-git clone https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos.git
-cd chatgptMCPforOwnGitlabRepos
+git clone https://github.com/phoenixjyb/reasonFirst.git
+cd reasonFirst
 uv sync
 ```
 
@@ -169,7 +169,7 @@ tunnel-client init \
   --sample sample_mcp_stdio_local \
   --profile selfhosted-gitlab \
   --tunnel-id tunnel_YOUR_ACTUAL_ID \
-  --mcp-command "/absolute/path/chatgptMCPforOwnGitlabRepos/run_mcp.sh"
+  --mcp-command "/absolute/path/reasonfirst/run_mcp.sh"
 ```
 
 诊断：

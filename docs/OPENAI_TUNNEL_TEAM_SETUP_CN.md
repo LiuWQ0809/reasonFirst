@@ -1,6 +1,6 @@
-# 团队 OpenAI Secure MCP Tunnel 配置指南
+# ReasonFirst 团队 OpenAI Secure MCP Tunnel 配置指南
 
-> 面向每位拥有 ChatGPT Pro 的团队成员。目标：每人用自己的 Tunnel + Runtime Key，把本机/内网的只读 GitLab MCP 安全接入 ChatGPT；ActualCoder 的本地写代码流程与 Tunnel 分离。
+> 这是 ReasonFirst **Reasoning Plane → 私有 GitLab read bridge** 的可选接入方式。面向每位拥有 ChatGPT Pro 的团队成员：每人用自己的 Tunnel + Runtime Key，把本机/内网的只读 GitLab MCP 接入 ChatGPT；ActualCoder 的本地 coding/execution 流程与 Tunnel 分离。
 
 ## 1. 先分清三种身份/凭证
 
@@ -136,8 +136,8 @@ go build -o bin\tunnel-client.exe .\cmd\client
 ### macOS / Linux
 
 ```bash
-git clone https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos.git
-cd chatgptMCPforOwnGitlabRepos
+git clone https://github.com/phoenixjyb/reasonFirst.git
+cd reasonFirst
 uv sync
 bash scripts/install_user.sh
 ```
@@ -147,8 +147,8 @@ MCP launcher：`run_mcp.sh`。
 ### Windows PowerShell
 
 ```powershell
-git clone https://github.com/phoenixjyb/chatgptMCPforOwnGitlabRepos.git
-Set-Location chatgptMCPforOwnGitlabRepos
+git clone https://github.com/phoenixjyb/reasonFirst.git
+Set-Location reasonFirst
 uv sync
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_user.ps1
 ```
@@ -425,7 +425,7 @@ get_file
 
 本项目：
 
-- [团队安装与日常使用](TEAM_GUIDE_CN.md)
+- [ReasonFirst Onboarding Guide](ONBOARDING_GUIDE_CN.md)
 - [ActualCoder Quickstart](ACTUAL_CODER_QUICKSTART.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Security](../SECURITY.md)
