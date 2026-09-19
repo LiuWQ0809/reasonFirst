@@ -79,6 +79,45 @@ class WorkspaceManagerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_read_remote_text_file_without_worktree(self) -> None:
+        seed_config = self.temp.name
+        created = self.manager.create_workspace("team/project", task_slug="seed-contract")
+        workspace_id = str(created["workspace_id"])
+        self.manager.write_file(
+            workspace_id,
+            ".actualcoder.yaml",
+            "version: 1\nproject:\n  base_branch: main\n",
+        )
+        self.manager.commit(workspace_id, "Add ActualCoder config")
+        pushed = self.manager.push(workspace_id)
+        branch = str(pushed["workspace"]["branch"])
+        self.manager.cleanup(workspace_id)
+
+        result = self.manager.read_remote_text_file(
+            "team/project",
+            ".actualcoder.yaml",
+            ref=branch,
+        )
+        self.assertTrue(result["exists"])
+        self.assertIn("version: 1", str(result["content"]))
+        self.assertEqual(result["ref"], branch)
+
+        with self.assertRaisesRegex(RuntimeError, "too large to read"):
+            self.manager.read_remote_text_file(
+                "team/project",
+                ".actualcoder.yaml",
+                ref=branch,
+                max_bytes=8,
+            )
+
+        missing = self.manager.read_remote_text_file(
+            "team/project",
+            ".does-not-exist",
+            ref=branch,
+        )
+        self.assertFalse(missing["exists"])
+        self.assertIsNone(missing["content"])
+
     def test_git_askpass_helper_is_platform_appropriate(self) -> None:
         settings = replace(self.settings, git_token="fake-token")
         manager = WorkspaceManager(
@@ -215,6 +254,37 @@ class WorkspaceManagerTests(unittest.TestCase):
         self.assertIn("NEW_FILE.md", str(diff["diff"]))
         self.assertIn("+hello", str(diff["diff"]))
 
+        self.manager.cleanup(workspace_id, force=True)
+
+    def test_reviewability_accepts_small_utf8_text_change(self) -> None:
+        created = self.manager.create_workspace("team/project", task_slug="reviewable")
+        workspace_id = str(created["workspace_id"])
+        self.manager.write_file(workspace_id, "notes.txt", "hello\n")
+
+        changed = self.manager.changed_paths(workspace_id)
+        result = self.manager.reviewability(workspace_id, changed)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["issues"], [])
+        self.manager.cleanup(workspace_id, force=True)
+
+    def test_reviewability_rejects_binary_and_oversized_changes(self) -> None:
+        created = self.manager.create_workspace("team/project", task_slug="unreviewable")
+        workspace_id = str(created["workspace_id"])
+        worktree = Path(str(created["worktree_path"]))
+
+        (worktree / "binary.bin").write_bytes(b"\xff\xfe\x00\x01")
+        (worktree / "large.txt").write_bytes(
+            b"x" * (self.settings.max_file_bytes + 1)
+        )
+
+        changed = self.manager.changed_paths(workspace_id)
+        result = self.manager.reviewability(workspace_id, changed)
+        reasons = {str(item["reason"]) for item in result["issues"]}
+
+        self.assertFalse(result["ok"])
+        self.assertIn("binary_or_non_utf8", reasons)
+        self.assertIn("file_too_large", reasons)
         self.manager.cleanup(workspace_id, force=True)
 
     def test_apply_patch_and_path_escape_rejection(self) -> None:

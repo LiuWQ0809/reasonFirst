@@ -62,6 +62,8 @@ Other references:
 - [ChatGPT MCP setup — English](docs/SETUP_TUTORIAL.md)
 - [ChatGPT MCP 配置教程 — 中文](docs/SETUP_TUTORIAL_CN.md)
 - [v0.2 architecture](docs/V0.2_WRITE_ACCESS_DESIGN.md)
+- [v0.3 分块开发路线](docs/V0.3_ROADMAP_CN.md)
+- [v0.3 发布前架构与安全审计](docs/V0.3_RELEASE_AUDIT_CN.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
@@ -119,10 +121,128 @@ Verify:
 actual-coder --help
 actual-coder config
 actual-coder agents
+actual-coder doctor
 gitlab-agent --help
 ```
 
-Start a coding task:
+For diagnostics without touching the GitLab API:
+
+```bash
+actual-coder doctor --offline
+```
+
+`doctor` is non-destructive: it does not modify GitLab and does not invoke Codex/Copilot models. It checks the local runtime, config safety, project allowlist, GitLab API authentication (unless `--offline`), proxy policy, workspace state, disk space, coding-backend availability, and optional tunnel-client setup.
+
+### Repository-local project contract
+
+A target repository may optionally contain:
+
+```text
+.actualcoder.yaml
+```
+
+Validate it without creating a worktree:
+
+```bash
+actual-coder project-config team/project-a --validate
+```
+
+Validate a local candidate before committing it:
+
+```bash
+actual-coder project-config team/project-a \
+  --file .actualcoder.example.yaml \
+  --validate
+```
+
+Use another ref:
+
+```bash
+actual-coder project-config team/project-a --ref develop --validate
+```
+
+The contract can declare base branch, preferred backends, validation argv, protected paths, project instructions, required executables, and MR conventions. Repository configuration **cannot grant itself new executable permissions**: every requested executable must already be present in the developer's `GITLAB_ALLOWED_EXECUTABLES`.
+
+See [`.actualcoder.example.yaml`](.actualcoder.example.yaml).
+
+### High-level start workflow
+
+The v0.3 high-level entry point is:
+
+```bash
+actual-coder start team/project-a \
+  --task fix-timeout \
+  --goal "Fix the timeout bug and add regression coverage"
+```
+
+`start` defaults to `--agent auto` and performs:
+
+```text
+doctor preflight
+→ read/validate .actualcoder.yaml
+→ resolve effective base branch
+→ select an installed backend
+→ create isolated worktree
+→ inject project instructions/protected paths/validation context
+→ launch the selected coding CLI interactively
+```
+
+To validate everything without invoking a coding model:
+
+```bash
+actual-coder start team/project-a \
+  --task inspect \
+  --goal "Inspect the workspace only" \
+  --no-launch
+```
+
+The launcher does not enable broad automatic-approval modes. Codex receives the generated handoff as its initial interactive prompt; Copilot is launched in interactive mode with the generated initial prompt.
+
+### GitLab CI feedback loop
+
+After an MR/branch has a pipeline, inspect it without invoking a model:
+
+```bash
+actual-coder ci <workspace-id>
+```
+
+ActualCoder selects the pipeline matching the current workspace HEAD when available, summarizes jobs, fetches only failed-job trace tails, removes ANSI control codes, redacts high-signal credentials/secret assignments, and reports whether the result is stale for the current workspace.
+
+To create a coding handoff grounded in that CI evidence:
+
+```bash
+actual-coder resume <workspace-id> \
+  --agent auto \
+  --from-ci \
+  --goal "Fix the CI failure at its root cause"
+```
+
+`resume --from-ci` refuses stale CI when the latest pipeline SHA does not match the current workspace HEAD. CI logs are injected into the prompt under an explicit **untrusted diagnostic data** boundary; log text cannot override the user goal or ActualCoder safety rules.
+
+This command does not automatically edit, commit, push, retry a pipeline, approve, or merge anything. After a repair, use the normal `actual-coder finish` workflow again.
+
+### Controlled finish workflow
+
+After the coding backend makes changes, first preview the finish plan:
+
+```bash
+actual-coder finish <workspace-id> \
+  --message "fix: describe the change" \
+  --dry-run
+```
+
+The dry run performs project validation commands, scans added diff lines for high-signal credentials, checks protected paths, shows the diff, and plans either `push-mr` or `push-update`. It performs no commit or push.
+
+If the plan is unblocked:
+
+```bash
+actual-coder finish <workspace-id> \
+  --message "fix: describe the change"
+```
+
+ActualCoder prints the plan and requires human confirmation before Git writes. `--yes` exists for intentional scripted use, but it does not bypass validation, protected-path, or secret-scan gates. Protected or secret findings require their own explicit override flags after review.
+
+The lower-level/compatibility task command remains available:
 
 ```bash
 actual-coder task team/project-a \
@@ -131,6 +251,18 @@ actual-coder task team/project-a \
   --task fix-timeout \
   --goal "Fix the timeout bug and add regression coverage"
 ```
+
+Or let ActualCoder select an installed backend:
+
+```bash
+actual-coder task team/project-a \
+  --agent auto \
+  --base-ref main \
+  --task fix-timeout \
+  --goal "Fix the timeout bug and add regression coverage"
+```
+
+`auto` reads `.actualcoder.yaml` from the task/base ref when present and uses `agents.preferred`; otherwise it falls back to `codex → copilot`. It never launches a model during selection and reports the selected backend plus selection reason in the JSON handoff.
 
 Or use Codex:
 
@@ -294,7 +426,9 @@ gitlab-agent
 
 - `v0.1.0`: read-only ChatGPT MCP release.
 - `main`: recommended team-consumption branch.
-- Current package version: `0.2.1`.
+- `main`: recommended stable team-consumption branch.
+- Current package version: `0.3.0`.
+- v0.3 delivers `doctor`, repository-local project contracts, project-aware auto backend selection, `start`, controlled `finish`, and GitLab CI feedback / `resume --from-ci`.
 - Real deployment validation has covered:
   - isolated workspace creation;
   - controlled edit/test/diff;
@@ -302,7 +436,9 @@ gitlab-agent
   - repeated pushes to the same MR;
   - cleanup and MR reconstruction;
   - switching Codex/Copilot handoffs;
-  - a real C++ coding task completed through GitHub Copilot CLI.
+  - a real C++ coding task completed through GitHub Copilot CLI;
+  - high-level start/finish against a real private GitLab MR;
+  - matching-head GitLab MR pipeline inspection through `actual-coder ci`.
 
 ## License
 

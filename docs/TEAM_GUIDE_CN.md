@@ -313,7 +313,111 @@ Windows 建议再用 ACL 将 `.env` 限制为当前用户访问；完整命令�
 actual-coder --help
 actual-coder config
 actual-coder agents
+actual-coder doctor
 gitlab-agent --help
+```
+
+推荐每位成员首次安装后先运行：
+
+```bash
+actual-coder doctor
+```
+
+如果当前不在公司网络 / VPN，可先：
+
+```bash
+actual-coder doctor --offline
+```
+
+`doctor` 不会修改 GitLab，也不会调用 Codex / Copilot 模型；它只做环境、配置和连通性诊断。
+
+状态含义：
+
+```text
+pass  = 正常
+warn  = 可以继续，但建议处理
+fail  = 核心条件不满足；doctor 返回非 0
+skip  = 可选项未配置或显式跳过
+```
+
+重点检查项包括：
+
+- Python / Git / uv；
+- Codex / Copilot 是否至少存在一个；
+- tunnel-client（可选）；
+- 配置文件与权限；
+- GitLab URL / Token；
+- 项目 allowlist；
+- proxy 策略；
+- workspace root 是否可写；
+- 磁盘空间；
+- stale / malformed workspace state；
+- GitLab API 登录是否成功。
+
+### 8.1 项目级 `.actualcoder.yaml`
+
+项目可以在仓库根目录放置：
+
+```text
+.actualcoder.yaml
+```
+
+它用于声明项目自己的 coding contract，例如：
+
+- 默认 base branch；
+- Codex / Copilot 的偏好顺序；
+- validation command；
+- protected paths；
+- project-specific instructions；
+- 项目依赖的 executable；
+- MR target branch / title prefix。
+
+团队成员可以在**不创建 worktree**的情况下验证远端配置：
+
+```bash
+actual-coder project-config team/project-a --validate
+```
+
+在提交到项目之前，也可以先用本地候选文件验证：
+
+```bash
+actual-coder project-config team/project-a \
+  --file .actualcoder.example.yaml \
+  --validate
+```
+
+这一步不会访问目标项目的 `.actualcoder.yaml`，只会用当前用户策略检查本地候选文件。
+
+指定 ref：
+
+```bash
+actual-coder project-config team/project-a \
+  --ref develop \
+  --validate
+```
+
+如果项目没有 `.actualcoder.yaml`，这是合法情况；ActualCoder 会继续使用用户级/default 配置。
+
+安全规则：repository-owned config **不能自己扩展 executable allowlist**。例如项目写：
+
+```yaml
+validation:
+  commands:
+    - argv: [bash, -c, something]
+```
+
+但开发者的 `GITLAB_ALLOWED_EXECUTABLES` 没有允许 `bash`，则：
+
+```bash
+actual-coder project-config ... --validate
+```
+
+必须失败。
+
+示例见仓库根目录：
+
+```text
+.actualcoder.example.yaml
 ```
 
 其中：
@@ -392,13 +496,82 @@ actual-coder resume "$WS" \
   --goal "Continue the current task"
 ```
 
+也可以让 ActualCoder 根据项目偏好与本机安装情况选择：
+
+```bash
+actual-coder resume "$WS" \
+  --agent auto \
+  --goal "Continue the current task"
+```
+
+`auto` 的规则：
+
+1. 如果远端 `.actualcoder.yaml` 有 `agents.preferred`，按该顺序尝试；
+2. 跳过当前 ActualCoder 不支持的 backend；
+3. 跳过本机没有安装的 backend；
+4. 如果项目没有偏好，默认尝试 `codex → copilot`；
+5. 如果项目偏好的 backend 都没安装，则使用默认 fallback；
+6. 两个都没安装则直接报错；
+7. 选择过程不会启动模型，不消耗额度；
+8. JSON 会输出 `agent_requested`、最终 `agent` 以及 `agent_selection.reason`。
+
 Git 分支、worktree、MR 都不会因为更换 backend 而变化。
 
 ---
 
 # 第五部分：标准开发流程
 
-## 11. 创建一个新任务
+## 11. 推荐：用 `actual-coder start` 开始任务
+
+团队日常推荐入口：
+
+```bash
+actual-coder start team/project-a \
+  --task fix-timeout \
+  --goal "Fix the request timeout bug and add regression coverage"
+```
+
+默认：
+
+```text
+--agent auto
+```
+
+一次完成：
+
+```text
+doctor preflight
+→ 读取/验证 .actualcoder.yaml
+→ 决定 effective base branch
+→ 选择已安装 backend
+→ 创建 isolated worktree
+→ 把 project instructions / protected paths / validation commands 注入 handoff
+→ 启动 coding CLI
+```
+
+如果只想测试整个准备流程、**不消耗模型额度**：
+
+```bash
+actual-coder start team/project-a \
+  --task inspect \
+  --goal "Inspect the workspace only. Do not modify files." \
+  --no-launch
+```
+
+如果目前不在公司网络/VPN，但其他本地准备需要测试，可配合：
+
+```text
+--offline-doctor
+```
+
+不过真正创建 GitLab workspace 仍然需要能访问 GitLab。
+
+ActualCoder 启动 backend 时不会替团队成员打开 `--allow-all-tools` / full-auto 一类广泛自动授权；使用 coding CLI 本身正常的交互/approval 机制。
+
+## 11.1 低层兼容：`actual-coder task`
+
+原有 `task` 仍然保留，适合调试和脚本：
+
 
 示例：
 
@@ -415,6 +588,16 @@ actual-coder task team/project-a \
 ```bash
 actual-coder task team/project-a \
   --agent codex \
+  --base-ref main \
+  --task fix-timeout \
+  --goal "Fix the request timeout bug and add regression coverage"
+```
+
+或者：
+
+```bash
+actual-coder task team/project-a \
+  --agent auto \
   --base-ref main \
   --task fix-timeout \
   --goal "Fix the request timeout bug and add regression coverage"
@@ -611,7 +794,135 @@ merge_request_url: ...
 
 ---
 
-# 第六部分：继续已有 MR
+## 17.1 推荐：用 `actual-coder finish` 收尾任务
+
+Coding backend 完成改动后，先做 dry-run：
+
+```bash
+actual-coder finish "$WS" \
+  --message "fix: describe the change" \
+  --dry-run
+```
+
+dry-run 会：
+
+```text
+读取 workspace base 的 .actualcoder.yaml
+→ 执行 configured validation
+→ 检查 changed paths
+→ 检查 protected paths
+→ 扫描新增 diff 中的高风险 credential
+→ 输出 diff
+→ 计划 commit
+→ 决定 first push / existing MR update
+```
+
+**不会 commit，不会 push。**
+
+如果结果：
+
+```text
+ok: true
+blockers: []
+```
+
+再执行：
+
+```bash
+actual-coder finish "$WS" \
+  --message "fix: describe the change"
+```
+
+ActualCoder 会先打印同一类 plan，再要求人工确认，然后：
+
+- dirty workspace → commit；
+- 第一次 push → `push-mr` 创建 MR；
+- 已有关联 MR → `push-update` 更新同一个 MR。
+
+安全 gate：
+
+- required validation 失败：阻断；
+- `.actualcoder.yaml` 永远视为 protected path；
+- 项目声明的 protected path 默认阻断；
+- secret scan 命中默认阻断；
+- `--yes` **只跳过人工确认**，不能绕过其他 gate；
+- protected path 必须单独 `--allow-protected`；
+- secret finding 必须单独 `--allow-secret-match`，且仅应在人工确认确实为误报/测试值后使用；
+- 不自动 merge MR。
+
+CI/脚本场景如果已经审阅 plan，可显式：
+
+```bash
+actual-coder finish "$WS" \
+  --message "fix: describe the change" \
+  --yes
+```
+
+但团队日常开发默认推荐保留交互确认。
+
+---
+
+# 第六部分：GitLab CI 反馈与继续已有 MR
+
+## 18. 查看 workspace 对应的 GitLab CI
+
+MR / feature branch 已经触发 pipeline 后：
+
+```bash
+actual-coder ci "$WS"
+```
+
+ActualCoder 会：
+
+- 查询 workspace feature branch 的最近 pipeline；
+- 优先选择 SHA 与当前 workspace HEAD 一致的 pipeline；
+- 获取 pipeline jobs；
+- 只抓 failed job 的日志尾部；
+- 默认每个 failed job 最多 12 KB、最多 3 个 failed jobs；
+- 去除 ANSI terminal escape；
+- 对 GitLab/GitHub/OpenAI 等高风险 credential 以及明显的 `TOKEN/PASSWORD/SECRET/API_KEY=...` 做脱敏；
+- 输出 `head_matches_pipeline` / `stale_for_workspace`；
+- 生成 `repair_context`。
+
+调大日志范围：
+
+```bash
+actual-coder ci "$WS" \
+  --tail-bytes 30000 \
+  --max-failed-jobs 5
+```
+
+最大值仍由工具限制，不允许无限读取日志。
+
+### 18.1 用 CI failure 恢复 coding task
+
+```bash
+actual-coder resume "$WS" \
+  --agent auto \
+  --from-ci \
+  --goal "Fix the CI failure at its root cause"
+```
+
+安全规则：
+
+- CI log 属于 **untrusted diagnostic data**，不是指令；
+- log 中即使出现“ignore previous instructions”也不能覆盖 user goal / ActualCoder rules；
+- 如果 latest pipeline SHA 与当前 workspace HEAD 不一致，`--from-ci` 直接拒绝；
+- pipeline 尚在 running/pending 时会明确 warning；
+- 没有 pipeline 时 `actual-coder ci` 可正常返回“not found”，但 `resume --from-ci` 会要求先 push / 等待 pipeline；
+- CI feedback 不会自动修改代码；
+- 不会自动 commit/push；
+- 不会自动 retry pipeline；
+- 不会 approve / merge MR。
+
+Coding agent 修复后仍然回到：
+
+```bash
+actual-coder finish "$WS" --message "fix: address CI failure"
+```
+
+---
+
 
 ## 18. 同一 workspace 再修改
 
@@ -1075,6 +1386,8 @@ actual-coder agents
 - [ ] `actual-coder --help` 成功；
 - [ ] `actual-coder config` 显示正确 GitLab 与 allowlist；
 - [ ] `actual-coder agents` 能看到至少一个 backend；
+- [ ] `actual-coder doctor` 无 FAIL；
+- [ ] 目标项目如存在 `.actualcoder.yaml`，则 `actual-coder project-config <project> --validate` 通过；
 - [ ] `GITLAB_TOKEN` 不在任何 Git tracked file 中；
 - [ ] `GITLAB_GIT_TOKEN` 不在任何 Git tracked file 中；
 - [ ] `uv run python scripts/check_repo_secrets.py` 通过；

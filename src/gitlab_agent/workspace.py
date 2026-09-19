@@ -191,7 +191,7 @@ class WorkspaceManager:
         if require_token and not token:
             raise RuntimeError(
                 "No Git credential is configured. Set GITLAB_GIT_TOKEN "
-                "(recommended for v0.2 writes) or GITLAB_TOKEN."
+                "(recommended for ActualCoder writes) or GITLAB_TOKEN."
             )
         if not token:
             yield env
@@ -351,6 +351,95 @@ class WorkspaceManager:
                 return proc.stdout.strip()
         raise RuntimeError(f"Could not resolve base ref {base_ref!r}")
 
+    def read_remote_text_file(
+        self,
+        project: str,
+        relative_path: str,
+        *,
+        ref: str | None = None,
+        refresh_remote: bool = True,
+        max_bytes: int | None = None,
+    ) -> dict[str, object]:
+        """Read a UTF-8 text file from a fetched remote ref without creating a worktree."""
+
+        project = project.strip().strip("/")
+        if not project or "/" not in project:
+            raise ValueError("project must be a GitLab path_with_namespace")
+
+        rel = relative_path.strip().replace("\\", "/")
+        if (
+            not rel
+            or rel.startswith("/")
+            or ":" in rel
+            or any(part in {"", ".", ".."} for part in rel.split("/"))
+        ):
+            raise ValueError("relative_path must be a safe repository-relative path")
+
+        if refresh_remote:
+            repo_path = self._ensure_cached_repo(project)
+        else:
+            self.settings.assert_project_allowed_for_workspace(project)
+            repo_path = self._repo_path(project)
+            if not repo_path.is_dir():
+                raise RuntimeError(
+                    f"Repository cache is not prepared for {project!r}; "
+                    "refresh_remote=False requires an existing managed cache"
+                )
+
+        effective_ref = (ref or self.settings.default_base_ref).strip()
+        commit_sha = self._resolve_base_sha(repo_path, effective_ref)
+        spec = f"{commit_sha}:{rel}"
+
+        exists = self._run_git(
+            ["--git-dir", str(repo_path), "cat-file", "-e", spec],
+            check=False,
+        )
+        if exists.returncode != 0:
+            return {
+                "project": project,
+                "ref": effective_ref,
+                "commit_sha": commit_sha,
+                "path": rel,
+                "exists": False,
+                "content": None,
+            }
+
+        if max_bytes is not None:
+            if max_bytes <= 0:
+                raise ValueError("max_bytes must be positive")
+            size_proc = self._run_git(
+                ["--git-dir", str(repo_path), "cat-file", "-s", spec],
+            )
+            try:
+                blob_size = int(size_proc.stdout.strip())
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Could not determine size for {rel!r} at {effective_ref!r}"
+                ) from exc
+            if blob_size > max_bytes:
+                raise RuntimeError(
+                    f"{rel} is too large to read: {blob_size} bytes; "
+                    f"maximum is {max_bytes}"
+                )
+
+        shown = self._run_git(
+            ["--git-dir", str(repo_path), "show", spec],
+            check=False,
+        )
+        if shown.returncode != 0:
+            raise RuntimeError(
+                f"Could not read {rel!r} from {project!r} at ref {effective_ref!r}"
+            )
+
+        return {
+            "project": project,
+            "ref": effective_ref,
+            "commit_sha": commit_sha,
+            "path": rel,
+            "exists": True,
+            "content": shown.stdout,
+        }
+
     # ------------------------------------------------------------------
     # Workspace lifecycle
     # ------------------------------------------------------------------
@@ -360,15 +449,29 @@ class WorkspaceManager:
         *,
         base_ref: str | None = None,
         task_slug: str = "task",
+        refresh_remote: bool = True,
     ) -> dict[str, object]:
         project = project.strip().strip("/")
         if not project or "/" not in project:
             raise ValueError(
-                "v0.2 workspaces require GitLab path_with_namespace, e.g. team/project"
+                "Managed workspaces require GitLab path_with_namespace, e.g. team/project"
             )
 
         self._progress(f"preparing workspace for {project}")
-        repo_path = self._ensure_cached_repo(project)
+        if refresh_remote:
+            repo_path = self._ensure_cached_repo(project)
+        else:
+            self.settings.assert_project_allowed_for_workspace(project)
+            repo_path = self._repo_path(project)
+            if not repo_path.is_dir():
+                raise RuntimeError(
+                    f"Repository cache is not prepared for {project!r}; "
+                    "refresh_remote=False requires a prior fetch in the same workflow"
+                )
+            self._progress(
+                f"reusing already-fetched repository cache for {project}: {repo_path}"
+            )
+
         effective_base = (base_ref or self.settings.default_base_ref).strip()
         self._progress(f"resolving base ref {effective_base} ...")
         base_sha = self._resolve_base_sha(repo_path, effective_base)
@@ -690,6 +793,197 @@ class WorkspaceManager:
 
         return "\n".join(chunks)
 
+    def changed_paths(self, workspace_id: str) -> list[str]:
+        """Return tracked + untracked paths changed relative to the workspace base."""
+
+        state = self.get_state(workspace_id)
+        worktree = self._worktree(state)
+
+        tracked = self._run_git(
+            [
+                "diff",
+                "--name-only",
+                "--no-ext-diff",
+                state.base_sha,
+                "--",
+                ".",
+            ],
+            cwd=worktree,
+        ).stdout.splitlines()
+        untracked = self._run_git(
+            ["ls-files", "--others", "--exclude-standard"],
+            cwd=worktree,
+        ).stdout.splitlines()
+
+        return sorted(
+            {
+                path.strip().replace("\\", "/")
+                for path in [*tracked, *untracked]
+                if path.strip()
+            }
+        )
+
+    def reviewability(
+        self,
+        workspace_id: str,
+        changed_paths: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Check whether changed working-tree content can be fully reviewed as UTF-8 text."""
+
+        state = self.get_state(workspace_id)
+        worktree = self._worktree(state)
+        paths = changed_paths if changed_paths is not None else self.changed_paths(workspace_id)
+
+        issues: list[dict[str, object]] = []
+        existing_file_bytes = 0
+        max_changed_paths = 256
+        max_total_bytes = 16 * 1024 * 1024
+
+        if len(paths) > max_changed_paths:
+            issues.append(
+                {
+                    "path": "<workspace>",
+                    "reason": "too_many_changed_paths",
+                    "count": len(paths),
+                    "limit": max_changed_paths,
+                }
+            )
+
+        for rel_path in paths[: max_changed_paths + 1]:
+            rel = Path(rel_path)
+            if rel.is_absolute() or ".." in rel.parts:
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "unsafe_changed_path",
+                    }
+                )
+                continue
+
+            candidate = worktree / rel
+            if candidate.is_symlink():
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "symlink_change",
+                    }
+                )
+                continue
+
+            if not candidate.exists():
+                # Deletions are represented completely by Git diff metadata/content.
+                continue
+
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(worktree)
+            except ValueError:
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "path_escaped_worktree",
+                    }
+                )
+                continue
+
+            if not resolved.is_file():
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "non_regular_file",
+                    }
+                )
+                continue
+
+            try:
+                size = resolved.stat().st_size
+            except OSError as exc:
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "stat_failed",
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            existing_file_bytes += size
+            if existing_file_bytes > max_total_bytes:
+                issues.append(
+                    {
+                        "path": "<workspace>",
+                        "reason": "changed_content_too_large",
+                        "bytes": existing_file_bytes,
+                        "limit": max_total_bytes,
+                    }
+                )
+                break
+
+            if size > self.settings.max_file_bytes:
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "file_too_large",
+                        "bytes": size,
+                        "limit": self.settings.max_file_bytes,
+                    }
+                )
+                continue
+
+            try:
+                resolved.read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "binary_or_non_utf8",
+                        "bytes": size,
+                    }
+                )
+            except OSError as exc:
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "reason": "read_failed",
+                        "error": str(exc),
+                    }
+                )
+
+        return {
+            "ok": not issues,
+            "changed_path_count": len(paths),
+            "existing_file_bytes": existing_file_bytes,
+            "max_changed_paths": max_changed_paths,
+            "max_total_bytes": max_total_bytes,
+            "issues": issues,
+        }
+
+    def security_diff(self, workspace_id: str) -> str:
+        """Return the complete base-to-working-tree patch used for secret scanning."""
+
+        state = self.get_state(workspace_id)
+        worktree = self._worktree(state)
+        tracked = self._run_git(
+            [
+                "diff",
+                "--no-ext-diff",
+                "--unified=0",
+                state.base_sha,
+                "--",
+                ".",
+            ],
+            cwd=worktree,
+        ).stdout
+        return tracked + "\n" + self._untracked_diff(worktree)
+
+    def latest_commit_subject(self, workspace_id: str) -> str:
+        state = self.get_state(workspace_id)
+        worktree = self._worktree(state)
+        return self._run_git(
+            ["log", "-1", "--pretty=%s"],
+            cwd=worktree,
+        ).stdout.strip()
+
     def diff(self, workspace_id: str) -> dict[str, object]:
         state = self.get_state(workspace_id)
         worktree = self._worktree(state)
@@ -800,7 +1094,7 @@ class WorkspaceManager:
         if state.pushed:
             raise RuntimeError(
                 "This workspace branch is already marked as pushed. "
-                "For the no-broad-API v0.2 flow, create the MR on the first push "
+                "For the managed no-broad-API flow, create the MR on the first push "
                 "with push-mr rather than calling push first."
             )
         worktree, _ = self._assert_pushable(state)
