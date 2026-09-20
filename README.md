@@ -1,5 +1,7 @@
 # ReasonFirst
 
+**English** · [简体中文](README_CN.md) · [Bilingual documentation index](docs/README.md)
+
 > **Reasoning-first coding orchestration.**
 > Use your strongest reasoning model for reasoning. Let coding agents do the coding.
 
@@ -16,8 +18,11 @@ The goal is to spend reasoning capacity on architecture, diagnosis, and review, 
 
 | Goal | Guide |
 | --- | --- |
+| Know where reasoning, transport, and coding happen | [One reasoning interface, one implementation workflow](docs/WORKFLOW.md) |
 | Install and run a first task | [Current quickstart](docs/ACTUAL_CODER_QUICKSTART.md) |
 | 中文安装与日常使用 | [当前中文快速上手](docs/QUICKSTART_CN.md) |
+| Connect or restart normal ChatGPT's GitLab reads | [MCP operator guide](docs/SETUP_TUTORIAL.md) · [中文](docs/OPENAI_TUNNEL_TEAM_SETUP_CN.md) |
+| Carry approved requirements and return evidence | [Manual task handoff template](docs/TASK_HANDOFF_TEMPLATE.md) |
 | Understand the architecture | [Design philosophy](docs/DESIGN_PHILOSOPHY.md) |
 | Move an existing GitLab installation to HTTPS | [English migration guide](docs/HTTPS_MIGRATION.md) · [中文迁移指南](docs/HTTPS_MIGRATION_CN.md) |
 | Configure API/MCP certificates and understand redirect errors | [Runtime TLS](docs/HTTPS_API_TLS.md) · [中文](docs/HTTPS_API_TLS_CN.md) |
@@ -47,6 +52,10 @@ Human + reasoning interface review and decide the next step
 ```
 
 The optional read-only GitLab MCP bridge lets a reasoning client inspect repositories, MRs, and CI. **It does not currently submit or execute local coding tasks through MCP.** The human operates the local CLI and carries task/result context between the interfaces. Persistent task specifications and a unified evidence API are planned, not shipped.
+
+**For the recommended ChatGPT workflow, no localhost Assistant is needed.** Use a normal ChatGPT conversation for reasoning and review; keep `tunnel-client` and `server.py` running for the tunnel-based read connection; use ActualCoder plus the selected coding CLI for implementation. The local dashboard's Overview/Logs are optional diagnostics. Its Assistant tab and Codex tunnel plugin are not onboarding requirements or acceptance gates. Not using that UI does not uninstall the coding CLI or guarantee that the upstream client's bundled helper is disabled.
+
+Validate the read path with live identity and file calls in normal ChatGPT, not an answer in `/ui#codex`. The [workflow guide](docs/WORKFLOW.md) separates startup, API/Git access, read acceptance, and approved writes. The [manual handoff template](docs/TASK_HANDOFF_TEMPLATE.md) is a writing aid, not an implemented TaskSpec/EvidencePack format.
 
 GitLab is the current target SCM/CI integration. This project's source is hosted on GitHub; that does not imply a GitHub-target task adapter exists. Architecture is provider-neutral in intent; the implemented coding adapters are currently `codex` and `copilot`.
 

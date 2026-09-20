@@ -1,393 +1,159 @@
-# ReasonFirst Tutorial: Connect ChatGPT to a Private / Self-Hosted GitLab with MCP
+# Connect normal ChatGPT to the read-only GitLab MCP
 
-> This document covers the **read-only GitLab bridge** used by ReasonFirst's Reasoning Plane. For the local coding workflow, see [ActualCoder Quickstart](ACTUAL_CODER_QUICKSTART.md). For the product philosophy, see [ReasonFirst Design Philosophy](DESIGN_PHILOSOPHY.md). Team members who read Chinese should use [ONBOARDING_GUIDE_CN.md](ONBOARDING_GUIDE_CN.md) as the main onboarding and usage guide.
+[中文](OPENAI_TUNNEL_TEAM_SETUP_CN.md) · [Workflow](WORKFLOW.md) · [CLI quickstart](ACTUAL_CODER_QUICKSTART.md) · [Troubleshooting](TROUBLESHOOTING.md)
 
-This tutorial shows how to connect a self-managed GitLab to ordinary ChatGPT conversations without exposing the GitLab instance directly to the public Internet.
-
-The design uses a read-only Python MCP server plus OpenAI Secure MCP Tunnel.
-
-## 0. Architecture
+**The localhost Assistant is not required.** ChatGPT is the reasoning interface; `tunnel-client` is transport; ReasonFirst's `server.py` exposes GitLab reads. ActualCoder and the selected coding CLI are the separate implementation workflow. There is no local task-execution MCP endpoint today.
 
 ```text
-┌──────────────────────────────┐
-│            ChatGPT           │
-│  "read this MR / repo / CI" │
-└──────────────┬───────────────┘
-               │
-               │ Secure MCP Tunnel
-               │ outbound HTTPS
-               ▼
-┌──────────────────────────────┐
-│      OpenAI tunnel service   │
-└──────────────▲───────────────┘
-               │
-               │ outbound connection maintained by tunnel-client
-               │
-┌──────────────┴───────────────┐
-│       Mac / Linux host       │
-│  tunnel-client + server.py   │
-└──────────────┬───────────────┘
-               │
-               │ GitLab REST API
-               │ HTTP or HTTPS
-               ▼
-┌──────────────────────────────┐
-│      Self-managed GitLab     │
-└──────────────────────────────┘
+Normal ChatGPT <-> OpenAI tunnel <-> tunnel-client on your host
+               <-> ReasonFirst stdio MCP <-> GitLab HTTPS API
 ```
 
-No inbound port on the laptop or GitLab is required by this design.
+Do not enter the acceptance prompt into the dashboard's Assistant tab (`/ui#codex`). That is a separate upstream Codex interface with separate approval behavior. Overview/Logs are optional diagnostics; neither the Assistant nor its Codex plugin is a prerequisite. Closing the browser dashboard does not stop the tunnel or necessarily disable its bundled background helper.
 
-## 1. Prerequisites
+## Choose the right starting point
 
-You need:
+| Current state | Next action |
+| --- | --- |
+| CLI API/Git already work and a tunnel profile exists | [Restart the existing profile](#restart-an-existing-profile) |
+| CLI works but no tunnel/profile exists | [First-time connection](#first-time-connection) |
+| CLI configuration or HTTPS is not ready | [CLI quickstart](ACTUAL_CODER_QUICKSTART.md) / [migration](HTTPS_MIGRATION.md) |
+| Tunnel started and fetched metadata | [Accept the read connection](#accept-the-read-connection) in normal ChatGPT |
+| Only the localhost Assistant refuses a tool call | Leave that optional panel aside; do not loosen approvals to test ChatGPT |
 
-1. A Mac or Linux machine that can reach your self-hosted GitLab.
-2. The same machine must have outbound Internet access to OpenAI over HTTPS.
-3. Python 3.10+ and `uv`.
-4. A GitLab access token with read permissions.
-5. ChatGPT access to custom MCP apps in Developer Mode.
-6. An OpenAI Secure MCP Tunnel and a runtime API key for `tunnel-client`.
+Do not repeat a completed migration, reinstall tools, rotate working keys, or create another tunnel as generic troubleshooting. An actually exposed credential is different: revoke/rotate it and remove credential-bearing notes, not just the displayed URL.
 
-Useful official documentation:
+## Keep the settings separate
 
-- ChatGPT Developer Mode and MCP: https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt
-- OpenAI tunnel client: https://github.com/openai/tunnel-client
-- Tunnel management: https://platform.openai.com/settings/organization/tunnels
-- Runtime API keys: https://platform.openai.com/settings/organization/api-keys
-- GitLab token scopes: https://docs.gitlab.com/security/tokens/access_token_scopes/
+| Setting | Meaning | Storage / consumer |
+| --- | --- | --- |
+| `GITLAB_BASE_URL` | Your final GitLab HTTPS endpoint | Private user `.env`, read by ReasonFirst |
+| `GITLAB_TOKEN` | GitLab API credential | Private user config or explicitly loaded environment |
+| `GITLAB_GIT_TOKEN` | Separate repository-write credential when needed | ActualCoder; not needed for the MCP read path |
+| `control_plane.tunnel_id` | Existing OpenAI tunnel identifier | Local tunnel profile; not a bearer secret, but deployment information |
+| `CONTROL_PLANE_API_KEY` | OpenAI runtime API key authorized for tunnel use | Approved secret storage, supplied to tunnel-client |
+| `control_plane.base_url` | OpenAI tunnel control-plane endpoint | Tunnel profile; **not** the GitLab URL |
 
-## 2. Clone and install
+The profile reference `api_key: "env:CONTROL_PLANE_API_KEY"` asks for an environment variable; it is not the key itself. A `tunnel_...` ID is not an API key. Key-prefix appearance does not establish validity or permissions. Tunnel use needs the applicable Platform organization and Tunnels Read + Use permissions; management/admin permissions are separate. Do not substitute an admin key or a GitLab token. Current provider eligibility and workspace association are described in the [official tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) and [Developer Mode help](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt).
+
+ReasonFirst's user config is plaintext protected by filesystem permissions, not a secret vault. Its loader does not resolve Keychain/file/env references placed inside `GITLAB_TOKEN`; keep secret retrieval separate. Use [SECURITY.md](../SECURITY.md) and operator-approved storage. Never put credentials in reference notes, command arguments, screenshots, or public logs.
+
+## Restart an existing profile
+
+These steps are for an interactive macOS/Linux Terminal session. A service-managed tunnel must be restarted through its existing supervisor and service environment; do not start a competing foreground instance. Windows users should use the [team guide](OPENAI_TUNNEL_TEAM_SETUP_CN.md).
+
+### 1. Stop the specific old process and inspect the launcher
+
+Press Control+C in the Terminal running this profile. Do not kill every Python/Codex process. List the profiles:
 
 ```bash
-git clone https://github.com/phoenixjyb/reasonFirst.git
-cd reasonFirst
-
-uv sync
+tunnel-client profiles list
 ```
 
-If `uv` is not installed on macOS:
+Use the returned profile name and file path. Inspect that file privately in a local editor, without printing the full profile into a chat. A stdio command should point to the long-lived, reviewed checkout, not a removed directory or a temporary PR worktree. Example fragment only:
+
+```yaml
+mcp:
+  commands:
+    - channel: main
+      command: "bash /absolute/path/to/reasonFirst/run_mcp.sh"
+```
+
+Replace the illustrative absolute path before using it. Preserve the existing tunnel ID, key reference, and other profile settings. Changing Terminal's directory does not change an absolute path stored in YAML. `run_mcp.sh` changes into its own directory and launches `server.py`; running it alone is not a tunnel connection. For paths containing spaces, use the installed client's supported quoting syntax and verify it with `doctor`.
+
+### 2. Load the intended config and runtime credential, then start
+
+Open the long-lived source checkout in Terminal first. Confirm `run_mcp.sh` exists. The following block is explicitly executed by **Bash**, so it can be pasted from macOS zsh without relying on zsh's interactive-comment or `read` behavior. Replace `selfhosted-gitlab` with the existing profile name and adjust the config path only if your installation uses another file.
+
+This block is for profiles using `env:CONTROL_PLANE_API_KEY`. It reuses an exported key or reads your existing runtime key at a hidden local prompt. It does not save the entered key. For an existing `file:` secret reference, keep that reference and use `doctor`/`run` with its existing secure loader instead of prompting unnecessarily.
 
 ```bash
-brew install uv
+bash <<'BASH'
+set +x
+set +v
+set -eu
+PROFILE="selfhosted-gitlab"
+export GITLAB_AGENT_ENV_FILE="$HOME/.config/gitlab-agent/.env"
+test -f "$GITLAB_AGENT_ENV_FILE"
+test -f run_mcp.sh
+unset GITLAB_BASE_URL
+if [ -z "${CONTROL_PLANE_API_KEY:-}" ]; then
+  read -r -s -p 'OpenAI tunnel runtime API key (hidden): ' CONTROL_PLANE_API_KEY </dev/tty
+  printf '\n'
+fi
+if [ -z "${CONTROL_PLANE_API_KEY:-}" ]; then
+  printf 'No runtime key supplied. Nothing was started.\n'
+  exit 1
+fi
+export CONTROL_PLANE_API_KEY
+tunnel-client doctor --profile "$PROFILE" --explain && tunnel-client run --profile "$PROFILE"
+BASH
 ```
 
-## 3. Create a read-only GitLab token
+The base-URL unset applies only in this child shell and selects the value from the explicit user config. Deliberate exported overrides require deliberate handling; do not edit a working `.env` to fix a stale launcher environment. GitLab credentials already exported by the launcher also override the file. After a credential/config update, clear stale overrides in that launcher and restart it.
 
-For a personal token, project token, or group token, give it only the permissions required for reading.
+A missing environment key is not evidence that the key was revoked. Retrieve it from your approved secret store; do not recreate a tunnel. This block never prints the key or puts its literal value into shell history. It is not protection against arbitrary same-user processes, and it does not implement a new Keychain integration.
 
-For this MCP server the useful scopes are:
+If `doctor` fails, `run` is not started. `RESULT ok`, startup, and metadata-fetch logs are useful checks, **not** proof of a successful GitLab tool call. Leave the foreground process running during ChatGPT use. The optional `codex_plugin` check may be skipped without blocking this read workflow; inspect the actual failed checks instead of installing unrelated plugins.
+
+### 3. Use the dashboard only for diagnostics
+
+Use the localhost address reported by your own startup output. With the common port 8080 configuration, a second Terminal can open:
+
+```bash
+open "http://127.0.0.1:8080/ui#overview"
+```
+
+`open` is macOS-specific; on other platforms enter the reported URL in your browser. Overview/Logs and health endpoints help isolate startup problems. Keep the admin UI on loopback. Health/readiness semantics vary by client version and do not replace a live tool call. The Assistant tab is not part of the next step.
+
+## Accept the read connection
+
+In **normal ChatGPT**, select your existing GitLab connection in the intended workspace and refresh/discover its tools where required by the current UI. Keep the tunnel process running. Do not create a duplicate connection just because its local process restarted.
+
+Replace the illustrative connection/project names and use a file known to exist on the project's actual default branch:
 
 ```text
-read_api
-read_repository
+Use the connected My GitLab MCP to call gitlab_whoami, then read README.md
+from team/project-a on main. Report the authenticated username and summarize
+the file using live tool results. If the connection is unavailable or a call
+is blocked, report that. Do not use earlier conversation results, local
+credential notes, web search, or token-bearing shell commands as a substitute.
 ```
 
-Avoid `api` or `write_repository` unless you later deliberately add write tools.
+Accept only an actual successful identity call and file read through the selected connection. A missing README is a file-selection issue; choose a known text file. Record results privately, with the project/ref and evidence actually available. The username/host may be private; do not post the transcript to public issues.
 
-A dedicated service account or narrowly scoped project/group token is preferable to a powerful personal token where your GitLab edition and workflow allow it.
+If ChatGPT cannot discover the connection, check selection/availability in that conversation, the intended ChatGPT workspace association, tunnel-use permission, and runtime health. Startup alone is insufficient. Failure only in `/ui#codex` belongs to the optional Codex interface; **do not disable global approvals or grant unrestricted execution to make it pass**. See [troubleshooting](TROUBLESHOOTING.md).
 
-## 4. Configure `.env`
+Read-path success is not a new push, a full application build, coding-agent authentication, or local task execution. There is no reason to create dummy commits just to test MCP reads.
+
+## First-time connection
+
+Only for a genuinely new installation:
+
+1. Configure a trusted source checkout and private GitLab user settings using the [quickstart](ACTUAL_CODER_QUICKSTART.md). Use its API check; `project-config` separately tests managed Git reads. Local coding-agent availability is not a read-only MCP protocol prerequisite: inspect each doctor result rather than demanding a coding backend solely for tunnel setup. The legacy `smoke_test.py` helper is outside the shared runtime TLS client factory and is not this guide's acceptance gate.
+2. Obtain or reuse an authorized tunnel in [Platform Tunnels](https://platform.openai.com/settings/organization/tunnels) and a runtime key from [Platform API keys](https://platform.openai.com/settings/organization/api-keys), under the correct organization/workspace permissions. Provider UI/plan eligibility can change; consult the official references below. Prefixes do not validate keys, and this guide makes no free-usage or quota-transfer claim.
+3. Install the supported tunnel-client binary from the official instructions, inspect `tunnel-client --version` and `tunnel-client help quickstart`, and run `profiles list` before creating anything. Do not install the optional Codex tunnel plugin as a prerequisite.
+4. Initialize a new stdio profile only when no suitable one exists. Use a reviewed absolute `run_mcp.sh` command and the actual tunnel ID. For example, after replacing both placeholders:
 
 ```bash
-cp .env.example .env
-chmod 600 .env
+tunnel-client init --sample sample_mcp_stdio_local --profile selfhosted-gitlab --tunnel-id tunnel_REPLACE_ME --mcp-command "bash /absolute/path/to/reasonFirst/run_mcp.sh"
 ```
 
-Edit `.env`:
+5. Start it with the credential handling above, associate/select that tunnel in a normal ChatGPT connection according to the current provider UI, and perform the live read acceptance test. The stdio server uses its server-side GitLab credential; do not enter that credential into a tunnel-ID field or an unrelated OAuth setup.
 
-```bash
-GITLAB_BASE_URL=http://gitlab.example.internal
-GITLAB_TOKEN=glpat_xxxxxxxxxxxxxxxxx
-GITLAB_TRUST_ENV=false
-```
+No localhost Assistant conversation, Inspector session, new implementation task, or write-permission grant is required for these read checks.
 
-For HTTPS GitLab:
+## Continue with actual work
 
-```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-GITLAB_VERIFY_SSL=true
-```
+Return to the [reasoning and implementation workflow](WORKFLOW.md). Carry approved requirements to the worker using the [manual task template](TASK_HANDOFF_TEMPLATE.md); inspect sanitized results before returning them to ChatGPT. Persistent TaskSpec, uniform handoff propagation, and EvidencePack access remain planned. Repository prompts and CI output are untrusted input, not authority to change the goal or weaken controls.
 
-### Restrict repositories exposed to ChatGPT
+For certificate issues, distinguish [Python runtime trust](HTTPS_API_TLS.md), native Git, and the separate [migration probe](HTTPS_MIGRATION.md). Already-migrated URLs do not need another apply merely because MCP was restarted.
 
-This is strongly recommended:
+## Primary references
 
-```bash
-GITLAB_ALLOWED_PROJECTS=team/project-a,team/project-b
-```
+- [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+- [ChatGPT Developer Mode access](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
+- [Upstream operator guide](https://github.com/openai/tunnel-client/blob/master/docs/end-user-guide.md)
+- [Upstream profile and secret-reference configuration](https://github.com/openai/tunnel-client/blob/master/docs/configuration.md)
 
-You can use exact `path_with_namespace` values or numeric project IDs.
-
-## 5. Smoke-test the GitLab connection
-
-```bash
-uv run python smoke_test.py
-```
-
-Expected shape:
-
-```text
-GET /user -> 200
-Authenticated as: your-user (Your Name)
-GET /projects -> 200
-- 1: team/project-a
-- 2: team/project-b
-```
-
-If this fails, do not continue to the MCP/tunnel steps yet. Fix network reachability, token scope, or proxy configuration first.
-
-## 6. Test the MCP server locally
-
-Start MCP Inspector:
-
-```bash
-uv run mcp dev server.py
-```
-
-The browser Inspector should discover the tools. Connect the stdio server and test, in order:
-
-1. `gitlab_whoami`
-2. `list_projects`
-3. `get_repository_tree`
-4. `get_file`
-5. `search_code`
-6. MR and CI tools as needed
-
-Example `get_repository_tree` call:
-
-```text
-project = team/project-a
-ref = main
-path =
-recursive = false
-```
-
-If your default branch is not `main`, leave `ref` empty where supported or use the project's actual branch.
-
-## 7. Create an OpenAI Secure MCP Tunnel
-
-Open:
-
-https://platform.openai.com/settings/organization/tunnels
-
-Create a tunnel and copy its ID:
-
-```text
-tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-Make sure the tunnel is available to the ChatGPT workspace/account in which you plan to create the custom app. If ChatGPT later says **No tunnels yet**, check the tunnel's organization/workspace association and permissions.
-
-## 8. Create a runtime API key
-
-Open:
-
-https://platform.openai.com/settings/organization/api-keys
-
-Create a dedicated runtime key for the tunnel client.
-
-For an interactive test session:
-
-```bash
-export CONTROL_PLANE_API_KEY="sk-..."
-```
-
-Do not commit this key and do not paste it into `.env` if the repository may be shared.
-
-On macOS, for long-term use, consider storing it in Keychain rather than plaintext in `.zshrc`.
-
-## 9. Install `tunnel-client`
-
-On macOS, use the official OpenAI Homebrew path:
-
-```bash
-brew install openai/tools/tunnel-client
-```
-
-Verify:
-
-```bash
-tunnel-client --version
-tunnel-client help quickstart
-```
-
-The OpenAI repository also publishes platform releases, but Homebrew is the clean path on macOS.
-
-## 10. Initialize a tunnel profile for this stdio MCP
-
-Make the launcher executable:
-
-```bash
-chmod +x run_mcp.sh
-```
-
-Get the absolute path of the repository:
-
-```bash
-pwd
-```
-
-Initialize a named profile:
-
-```bash
-tunnel-client init \
-  --sample sample_mcp_stdio_local \
-  --profile selfhosted-gitlab \
-  --tunnel-id tunnel_YOUR_ACTUAL_ID \
-  --mcp-command "/absolute/path/to/reasonfirst/run_mcp.sh"
-```
-
-The current working directory does not matter because `--mcp-command` is an absolute path and `run_mcp.sh` changes into its own directory.
-
-## 11. Diagnose before running
-
-```bash
-tunnel-client doctor \
-  --profile selfhosted-gitlab \
-  --explain
-```
-
-You want:
-
-```text
-RESULT ok
-```
-
-For a stdio MCP target it is normal for checks such as network reachability or OAuth metadata to show `SKIP`.
-
-## 12. Run the tunnel
-
-```bash
-tunnel-client run --profile selfhosted-gitlab
-```
-
-Keep this process running while ChatGPT is using the MCP.
-
-The local tunnel UI is normally available at:
-
-```text
-http://127.0.0.1:8080/ui
-```
-
-## 13. Create the custom app/plugin in ChatGPT
-
-In ChatGPT web:
-
-1. Enable **Developer Mode** under Settings → Apps → Advanced settings (wording can vary by rollout).
-2. In Settings → Apps/Plugins, create a new custom app/plugin.
-3. Give it a name such as `My GitLab MCP`.
-4. Under **Connection**, select **Tunnel**.
-5. Choose the tunnel created above.
-6. For this server, choose **None / no user-facing authentication** if offered. The GitLab token stays server-side on the MCP host.
-7. Accept the custom-MCP risk warning after reviewing the server.
-8. Scan/discover tools and create the app.
-
-If the Tunnel picker says **No tunnels yet** even though `tunnel-client run` is healthy, the most common cause is that the tunnel exists in the Platform organization but is not associated with the ChatGPT workspace/account currently in use.
-
-## 14. End-to-end validation in ChatGPT
-
-Try these prompts in order:
-
-```text
-Use My GitLab MCP and tell me which GitLab user is authenticated.
-```
-
-```text
-List the GitLab projects available through My GitLab MCP.
-```
-
-```text
-Show me the root tree of team/project-a on its default branch.
-```
-
-```text
-Read README.md from team/project-a and summarize it.
-```
-
-```text
-Inspect the architecture of team/project-a. Read the relevant files rather than only searching filenames.
-```
-
-For CI:
-
-```text
-Inspect the most recent failed pipeline, identify failed jobs, read the relevant job log, and explain the likely root cause.
-```
-
-At this point the full path is proven:
-
-```text
-ChatGPT → Secure MCP Tunnel → local MCP server → self-hosted GitLab API
-```
-
-## 15. macOS Keychain for the OpenAI runtime key (optional)
-
-Instead of putting a secret directly into `.zshrc`:
-
-```bash
-security add-generic-password \
-  -a "$USER" \
-  -s "openai-gitlab-mcp-tunnel" \
-  -w "sk-..." \
-  -U
-```
-
-Load it only when needed:
-
-```bash
-export CONTROL_PLANE_API_KEY="$(
-  security find-generic-password \
-    -a "$USER" \
-    -s "openai-gitlab-mcp-tunnel" \
-    -w 2>/dev/null
-)"
-```
-
-Verify only the length:
-
-```bash
-echo ${#CONTROL_PLANE_API_KEY}
-```
-
-Do not print the key itself.
-
-## 16. HTTP vs HTTPS on the GitLab side
-
-This MCP supports either:
-
-```text
-http://gitlab.example.internal
-```
-
-or:
-
-```text
-https://gitlab.example.com
-```
-
-If your current GitLab uses HTTP, the setup can still work because the OpenAI tunnel terminates at the MCP host; the MCP host then calls GitLab independently.
-
-However, HTTP means the GitLab access token and repository contents are not TLS-protected between the MCP host and GitLab. Use only on a trusted private network/VPN and migrate to HTTPS when practical.
-
-When you later switch GitLab to HTTPS, normally only this value needs to change:
-
-```bash
-GITLAB_BASE_URL=https://gitlab.example.com
-```
-
-The MCP tool contract and ChatGPT plugin do not need to change.
-
-## 17. Production hardening
-
-For a first prototype, a MacBook is fine. For team/24x7 use, move the same code to an always-on machine and add process supervision.
-
-Recommended controls:
-
-- dedicated low-privilege GitLab identity/token;
-- `GITLAB_ALLOWED_PROJECTS` allowlist;
-- HTTPS to GitLab when available;
-- token expiration/rotation;
-- macOS Keychain or a proper secret manager for runtime secrets;
-- monitor tunnel and MCP logs;
-- keep tools read-only unless there is a concrete need for writes.
+The optional-Assistant distinction was also checked against upstream revision `0f870e50a973fa820d4c409000059e181e8d242b`. It does not promise identical UI, process, or approval behavior in every installed version.

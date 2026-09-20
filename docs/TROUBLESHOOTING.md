@@ -1,192 +1,99 @@
-# Troubleshooting
+# Troubleshooting by layer
 
-## `ImportError: Using SOCKS proxy, but the 'socksio' package is not installed`
+[Workflow](WORKFLOW.md) · [ChatGPT connection and restart](SETUP_TUTORIAL.md) · [中文](OPENAI_TUNNEL_TEAM_SETUP_CN.md) · [Security](../SECURITY.md)
 
-The host likely has `ALL_PROXY`, `HTTP_PROXY`, or `HTTPS_PROXY` set and `httpx` is trying to use it.
+Identify the failing client before changing configuration. A working CLI, a started tunnel, a localhost Assistant session, and a live normal ChatGPT tool call are different pieces of evidence. Do not reinstall, recreate a tunnel/workspace, disable verification, broaden permissions, or rotate an otherwise working key without a reason. An exposed active credential must still be revoked/rotated regardless of successful tests.
 
-This project defaults to:
+## Localhost Assistant says a tool requires approval
 
-```bash
-GITLAB_TRUST_ENV=false
+The dashboard's Assistant (`/ui#codex`) is an upstream Codex interface, not normal ChatGPT. In tunnel-client revision `0f870e50a973fa820d4c409000059e181e8d242b`, that panel submits `approval_policy: never`; calls requiring approval can therefore be blocked. This describes that observed version, not every future client.
+
+**The localhost Assistant is optional and is not a ReasonFirst acceptance gate.** Close that tab, keep the tunnel process running, and use the selected GitLab connection in normal ChatGPT. Do not set global approvals to auto-accept, request unrestricted execution, or bypass a blocked MCP call with a token-bearing shell command. If you separately need this upstream panel, investigate its supported approval interface as an independent integration task.
+
+Not using the panel does not uninstall Codex or stop its bundled helper. Keep the coding CLI for implementation. A local dashboard error alone does not establish that the normal ChatGPT connection failed.
+
+## Old source directory in the tunnel profile
+
+Run `tunnel-client profiles list` and inspect the returned file privately. Correct only the approved `main` MCP command to the long-lived checkout, for example:
+
+```yaml
+mcp:
+  commands:
+    - channel: main
+      command: "bash /absolute/path/to/reasonFirst/run_mcp.sh"
 ```
 
-which tells `httpx` not to inherit those proxy variables for GitLab traffic.
+Keep the existing Tunnel ID and credential reference. An absolute command does not change when you `cd` elsewhere. Stop the specific old process and use the [restart procedure](SETUP_TUTORIAL.md#restart-an-existing-profile). Do not recreate the profile or use a temporary PR checkout for a permanent launcher.
 
-Inspect your shell:
+## Missing CONTROL_PLANE_API_KEY
 
-```bash
-env | grep -i proxy
-```
+`api_key: "env:CONTROL_PLANE_API_KEY"` needs that exported variable in the process that runs the tunnel. It is an OpenAI runtime key for tunnel use, not the Tunnel ID or GitLab token. Retrieve the existing value from approved secret storage; the restart guide includes a hidden prompt for interactive use. An environment export in an exited subshell does not persist in a new shell or service.
 
-Do **not** install SOCKS support just to access an internal GitLab unless that GitLab genuinely must be reached through the proxy.
+A missing variable is not a rejected/expired key. For actual control-plane authentication/permission failures, check the key and the applicable organization/workspace permissions using the official guide. Do not use an admin key for the daemon. Existing `file:` references need their protected file, not a new environment export. An optional Codex-plugin SKIP is unrelated.
 
-## Smoke test succeeds but MCP Inspector tool calls fail
+## Startup succeeds but normal ChatGPT has no tools
 
-Check that the current `server.py` loads `.env` and that the token is present without printing it:
+Keep the tunnel running. Check the selected connection in that conversation, intended ChatGPT workspace association, tunnel-use permissions, and actual profile target. Refresh/discover tools through the current provider UI. `started`, metadata fetched, and health/readiness responses are not proof of an identity/file call.
 
-```bash
-uv run python - <<'PY'
-import os
-from server import gitlab
-print("base_url =", gitlab.base_url)
-print("token_set =", bool(gitlab.token))
-print("token_len =", len(gitlab.token))
-print("trust_env =", gitlab.trust_env)
-PY
-```
+Use [the live read test](SETUP_TUTORIAL.md#accept-the-read-connection). Do not use cached answers, web search, local credential notes, or a separately running localhost Assistant as substitutes. MCP Inspector is an optional isolated debugging tool, not an extra account/login step everyone must complete.
 
-Then retest:
+## Stale HTTP notes or a credential appears in command output
 
-```bash
-uv run mcp dev server.py
-```
+A Markdown note is not an effective-configuration report. Check `actual-coder config` and the actual MCP startup configuration rather than assuming a displayed note changed the running server. Locate the note privately using filename-only searches; do not print the matched credential lines into a chat.
 
-## Inspector opens but shows `Disconnected`
+Remove credentials and token-bearing commands from reference notes. Never replace an exposed value with the new token in that note. Revoke/rotate active exposed credentials, update the affected private store, clear stale exported overrides, and restart the process. Do not post unredacted screenshots, profile files, `.env`, logs, or migration backups. Do not merely disable context injection and assume stored copies are gone.
 
-Toggle/connect the stdio server in MCP Inspector. Seeing the tool list proves `tools/list` works; execute `gitlab_whoami` to verify the full MCP → GitLab call path.
+## API, native Git, and the migration probe disagree
 
-## `tunnel-client doctor` reports `SKIP` for stdio reachability or OAuth metadata
+Use the [runtime TLS guide](HTTPS_API_TLS.md). `GITLAB_CA_BUNDLE` configures the shared Python API/MCP client, not native Git or the migration probe. A credential-free probe can verify TLS and return 401/403 while authenticated access remains untested. A probe returning 404/500 is not complete service readiness.
 
-That is expected for a stdio target. The important line is:
+Configure the final API endpoint: all shared-client API redirects and disabled certificate verification are rejected. Do not follow a login redirect with a PAT or fall back to HTTP. The legacy `smoke_test.py` helper does not use the shared runtime client factory and is not proof of the current request guards.
 
-```text
-RESULT ok
-```
+For existing HTTP caches use the reviewed [migration procedure](HTTPS_MIGRATION.md). A repeat preview with no changes is sufficient local URL convergence evidence; do not apply again solely to restart MCP. A successful Git fetch does not establish push rights.
 
-## ChatGPT says `No tunnels yet`
+## Proxy errors or Git HTTP 502
 
-Check:
+For an approved direct route, the private user config normally keeps:
 
-1. The tunnel exists in the same OpenAI Platform organization you are using.
-2. It is associated/available to the target ChatGPT workspace/account.
-3. Your account has Tunnel Read + Use permission.
-4. `tunnel-client run --profile ...` is actually running.
-5. Refresh the ChatGPT app/plugin creation screen after association changes.
-
-## Tunnel is healthy but ChatGPT cannot read GitLab
-
-Work from the inside out:
-
-```text
-GitLab API smoke test
-  ↓
-MCP Inspector
-  ↓
-tunnel-client doctor
-  ↓
-tunnel-client run
-  ↓
-ChatGPT tool scan
-```
-
-Do not debug all layers at once.
-
-## `401` / `403` from GitLab
-
-Typical causes:
-
-- token expired or revoked;
-- missing `read_api` / `read_repository` scope;
-- token owner cannot access the project;
-- project is not allowed by `GITLAB_ALLOWED_PROJECTS`.
-
-## Project allowlist errors
-
-`GITLAB_ALLOWED_PROJECTS` requires exact values, e.g.:
-
-```bash
-GITLAB_ALLOWED_PROJECTS=123,group/project-a,group/project-b
-```
-
-Use either the numeric project ID or exact `path_with_namespace`.
-
-
-## `actual-coder: command not found`
-
-From the tool repository:
-
-```bash
-bash scripts/install_user.sh
-```
-
-If the command is still missing:
-
-```bash
-uv tool update-shell
-```
-
-Open a new terminal and verify:
-
-```bash
-which actual-coder
-actual-coder --help
-```
-
-## ActualCoder cannot find configuration
-
-The recommended per-user config is:
-
-```text
-~/.config/gitlab-agent/.env
-```
-
-Check the effective non-secret configuration:
-
-```bash
-actual-coder config
-```
-
-The config lookup order is `GITLAB_AGENT_ENV_FILE`, then `~/.config/gitlab-agent/.env`, then a local `.env`.
-
-## Git clone/fetch/push returns 502 on an internal GitLab
-
-A machine-wide proxy is a common cause. For a GitLab that should be reached directly:
-
-```bash
+```dotenv
 GITLAB_TRUST_ENV=false
 GITLAB_GIT_TRUST_ENV=false
 ```
 
-The Git setting also clears Git's configured `http.proxy` for managed clone/fetch/push operations.
+Python and Git proxy policy are separate from the tunnel's outbound OpenAI route and from CA trust. A 502 can have other server/network causes; do not assume every 502 is a proxy failure. Inspect proxy settings privately: proxy URLs can contain credentials, so avoid posting `env` or full Git configuration. Do not install SOCKS support or enable proxy inheritance unless that route is actually intended.
 
-## Build/test command is rejected
+## ActualCoder installation or effective config differs
 
-`gitlab-agent run` only allows executables listed in `GITLAB_ALLOWED_EXECUTABLES`.
+From a stable checkout, see [local installation updates](LOCAL_PR_REVIEW.md). Inspect `actual-coder config` and the interpreter/source path locally. A global editable tool and `uv run` in a temporary checkout may use different environments. Package version `0.3.0` alone does not identify the source commit.
 
-Inspect:
+Config selection is `GITLAB_AGENT_ENV_FILE`, then the stable user config, then local `.env`; already-exported values take precedence. CLI fallback is relative to its working directory; MCP fallback is relative to its server source. Do not overwrite a working config with `.env.example` or rename managed workspace directories to match a source-repository rename.
 
-```bash
-actual-coder config
-```
+## Missing project contract or rejected command
 
-Add only the commands your project genuinely needs (for example `colcon` or `ctest` for some ROS/C++ projects).
+`found: false, valid: true` means no `.actualcoder.yaml` was loaded, not that tests passed. Define real test commands in the target repository through its normal review process. Use exact project paths for managed workspaces; API numeric IDs do not replace the path-based local workflow. Do not broaden the user allowlist to silence a local rejection.
 
-## Codex usage is exhausted
+Repository policy cannot add executable permissions. A required executable must be deliberately allowed by the user, and running a permitted interpreter is still not an OS sandbox. Finish uses policy from the original workspace base, so a newly merged contract does not silently change old tasks.
 
-Do not rebuild the workspace. Switch the same workspace to another backend:
+## Backend quota or existing workspace recovery
 
-```bash
-actual-coder resume "$WS" \
-  --agent copilot \
-  --goal "Continue the current task"
-```
-
-Git state and any existing MR remain unchanged.
-
-## Local workspace was cleaned up but the MR still exists
-
-Reconstruct it:
+For an existing task, set `WS` to its real ID and prepare a replacement handoff:
 
 ```bash
-actual-coder checkout-mr team/project-a 123 \
-  --agent copilot \
-  --goal "Continue this MR"
+actual-coder resume "$WS" --agent copilot --goal "Continue the same approved task and acceptance criteria"
 ```
 
-After further commits, use:
+This returns a handoff; it does not automatically launch the agent. Review it and carry the [manual task requirements](TASK_HANDOFF_TEMPLATE.md), because project context is not yet uniform across all routes. Do not start a second workspace just to switch backend.
+
+Only when local state is unavailable and the branch remains remote, reconstruct the existing MR using the real project and IID:
 
 ```bash
-gitlab-agent push-update "$WS"
+actual-coder checkout-mr team/project-a 123 --agent copilot --goal "Continue the existing MR within its reviewed scope"
 ```
 
-For the full team workflow, see [TEAM_GUIDE_CN.md](TEAM_GUIDE_CN.md).
+Recovery refuses to overwrite unpublished abandoned branches. After implementing, use reviewed `finish --dry-run` and confirmed `finish`, not lower-level push commands as an equivalent safety gate. `cleanup --force` is an intentional discard operation, not recovery. See [the quickstart](ACTUAL_CODER_QUICKSTART.md) for the full workflow.
+
+## Evidence to share safely
+
+Share the first failing check, tool/source revision, shell/platform, and a small sanitized result. State the client (CLI, tunnel, normal ChatGPT, optional Assistant), what was actually attempted, and whether logs were complete. Do not demand a fresh push or full build just to accept a read connection. No successful diagnostic makes an exposed credential safe.
+
+Primary references: [OpenAI tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), [upstream operator guide](https://github.com/openai/tunnel-client/blob/master/docs/end-user-guide.md), [versioned Assistant implementation](https://github.com/openai/tunnel-client/blob/0f870e50a973fa820d4c409000059e181e8d242b/adminui/src/components/CodexPanel.svelte).
