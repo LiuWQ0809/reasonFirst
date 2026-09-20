@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+These are source changes after v0.3.0, not a new release tag. Package metadata
+still reports 0.3.0; identify installations and test evidence by commit SHA.
+
+### Correctness and deployment compatibility
+
+- Preserve unpublished commits during normal workspace cleanup and abandoned-branch recovery using fresh publication evidence and compare-and-delete refs (#5).
+- Propagate failed child commands/timeouts to shell exit status while retaining structured results (#7).
+- Scan bounded base-to-HEAD commit-history additions, including merge parents, before controlled finish; remove whole-line placeholder exemptions and sanitize findings/display diffs (#8).
+- Share bounded, sanitized failed-job trace evidence between CLI and read-only MCP, with explicit completeness/limit reporting (#9).
+- Add explicit local HTTP-to-HTTPS migration with offline preview, reviewed input fingerprint, private backups/journal, forward recovery, and a credential-free TLS probe (#12). No workspace reset/reclone or automatic remote writes.
+
+- Add shared verified Python API/MCP TLS contexts, optional user-level `GITLAB_CA_BUNDLE`, pre-send credential-destination checks, and rejection of all API redirects (#13). Native Git and the migration-only TLS probe retain separate trust behavior.
+- Compatibility: Python API/MCP clients reject disabled verification and no longer implicitly use `SSL_CERT_FILE`/`SSL_CERT_DIR`; configure the final API endpoint and explicit CA bundle when required.
+
+### Public documentation and contribution workflow
+
+- Refresh README and current English/Chinese quickstarts for external contributors, keeping real deployment details out of examples.
+- Document Git-based PR review, normal editable-install updates, and separate configuration/MCP lifecycle steps; manual archive copying is not required.
+- Add English HTTPS migration and runtime TLS guides, a documentation index, CONTRIBUTING, issue/PR templates, and a public-release checklist.
+- Reconcile public capability claims with merged API/MCP TLS support; distinguish native Git, the maintenance probe, and legacy helpers instead of claiming a universal transport policy.
+- Clarify missing project contracts, manual paths that do not enforce full finish gates, host-execution/concurrency limits, and the distinction between published releases, merged source, and planned capabilities.
+- Prefer HTTPS in the example configuration without modifying existing user settings, licenses, runtime behavior, repository visibility, or release metadata.
+
+### Still planned
+
+- Native Git trust/destination-policy integration and layered API-versus-Git diagnostics (#10).
+- Consistent task handoffs, general workspace locking/recovery, persistent TaskSpec and EvidencePack (#6).
+
+### Naming (retained)
+
 - Rebrand the project as **ReasonFirst**: reasoning-first coding orchestration.
 - Keep **ActualCoder** / `actual-coder` as the local coding orchestration engine and CLI.
 - Keep `gitlab-agent` as the current GitLab/workspace control plane.

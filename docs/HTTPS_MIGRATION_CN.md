@@ -2,7 +2,7 @@
 
 本增量提供独立维护命令 `actual-coder-migrate-https`，不会改变日常
 `actual-coder` / `gitlab-agent` 命令，也不会修改业务 GitLab 服务端。
-对应 Issue #10 的**显式本地 URL 迁移**部分，不表示完整 TLS 改造已完成。
+对应 Issue #10 的**显式本地 URL 迁移**部分。Python API/MCP 运行时 CA 与重定向策略另见[运行时 TLS 指南](HTTPS_API_TLS_CN.md)；原生 Git 仍单独配置。
 
 ## 1. 范围与前提
 
@@ -93,10 +93,12 @@ Git 配置覆盖变量、symlink 输入等，会拒绝而不是忽略。先明�
 API 认证成功**。重定向会停止该 probe，需要检查 API/reverse proxy 配置；
 不能把登录网页重定向当作 API 就绪证据。探测失败时本次 apply 不执行。
 
-**限制：此 probe 不实现新的私有 CA 配置，不验证 Git TLS / PAT / MR / CI。
+**限制：此 probe 不读取 `GITLAB_CA_BUNDLE`，不验证 Git TLS / PAT / MR / CI。
 不依赖浏览器信任库，也不通过环境变量开放全部代理/CA 设置。**
-已有企业私有 CA、Windows Schannel/OpenSSL 差异、同步/异步 API 和 Git 的统一
-CA 配置、运行时 authenticated redirect policy 仍是后续独立改造。
+Python API/MCP 运行时现已支持显式私有 CA 与拒绝 API 重定向，但本维护 probe
+仍使用默认信任库。因此运行时已配好私有 CA 的 API 可以正常工作，而这个 probe
+仍可能拒绝该证书；不要关闭校验或误判为 token 失效。原生 Git 的 CA、Windows
+Schannel/OpenSSL 行为与分层诊断仍是独立工作。详见[运行时 TLS](HTTPS_API_TLS_CN.md)。
 
 ## 5. 停止 worker 后确认应用
 
@@ -151,14 +153,15 @@ Git refs 和 worktree HEAD/branch/status。重复完成后的迁移是 no-op。
 
 ## 7. 应用后独立验收
 
-重新打开使用正确配置的 shell，重启 MCP，检查：
+重新打开使用正确配置的 shell，重启 MCP，检查；将示例 WS 改为实际 workspace ID：
 
 ```bash
+WS="012345abcdef"
 actual-coder config
 actual-coder doctor
 actual-coder list
-actual-coder status <workspace-id>
-actual-coder ci <workspace-id>
+actual-coder status "$WS"
+actual-coder ci "$WS"
 ```
 
 确认基准 URL 为 HTTPS，并在本地核对一个现有缓存的 fetch/push origin。
@@ -177,8 +180,9 @@ uv run python -m unittest discover -s tests -v
 uv run actual-coder-migrate-https --help
 ```
 
-本增量不修改运行时 API/Git 的统一私有 CA 或 redirect policy，不修改常规
-`doctor`，也不实现整个 workspace locking。Issue #10 的这些项仍须继续。
+本维护工具本身不修改原生 Git 的 CA/redirect policy，不修改常规 `doctor`，
+也不实现整个 workspace locking。Python API/MCP 的独立运行时加固已合入；
+Issue #10 仍跟踪原生 Git 策略与分层诊断，不代表所有 TLS 工作都已完成。
 之后回到 Issue #6 的 handoff、一致状态、TaskSpec 和 EvidencePack。
 
 主要规范参考：HTTPX SSL / environment variables 文档、Git git-config 文档。
