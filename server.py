@@ -12,6 +12,7 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 from gitlab_agent.log_evidence import aread_trace_tail
+from gitlab_agent.tls import api_client_options, ca_bundle_path, validate_base_url
 
 
 # -----------------------------------------------------------------------------
@@ -121,6 +122,7 @@ class GitLabClient:
         self.base_url = os.getenv("GITLAB_BASE_URL", DEFAULT_BASE_URL).strip().rstrip("/")
         self.token = os.getenv("GITLAB_TOKEN", "").strip()
         self.verify_ssl = _env_bool("GITLAB_VERIFY_SSL", True)
+        self.ca_bundle = ca_bundle_path(os.getenv("GITLAB_CA_BUNDLE"))
 
         # Ignore ALL_PROXY / HTTP_PROXY / HTTPS_PROXY by default so requests to
         # an internal GitLab can go directly over the local/corporate network.
@@ -137,11 +139,7 @@ class GitLabClient:
                 "GITLAB_BASE_URL is not configured. Put your self-managed GitLab URL in .env, "
                 "for example http://gitlab.example.internal or https://gitlab.example.com."
             )
-        if not self.base_url.startswith(("http://", "https://")):
-            raise RuntimeError(
-                "GITLAB_BASE_URL must start with http:// or https://; "
-                f"got {self.base_url!r}"
-            )
+        self.base_url = validate_base_url(self.base_url)
 
         logger.info(
             "GitLab client configured: base_url=%s token_set=%s trust_env=%s allowlist=%s",
@@ -163,6 +161,17 @@ class GitLabClient:
             "User-Agent": "reasonfirst-gitlab-mcp/0.3",
         }
 
+    def _client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            headers=self._headers(),
+            timeout=self.timeout,
+            trust_env=self.trust_env,
+            **api_client_options(
+                self.base_url, verify_ssl=self.verify_ssl,
+                ca_bundle=self.ca_bundle, asynchronous=True,
+            ),
+        )
+
     def assert_project_allowed(self, project: str | int) -> None:
         if not self.allowed:
             return
@@ -183,13 +192,7 @@ class GitLabClient:
         url = f"{self.base_url}/api/v4{path}"
 
         try:
-            async with httpx.AsyncClient(
-                headers=self._headers(),
-                timeout=self.timeout,
-                verify=self.verify_ssl,
-                follow_redirects=True,
-                trust_env=self.trust_env,
-            ) as client:
+            async with self._client() as client:
                 response = await client.request(method, url, params=params)
         except httpx.TimeoutException as exc:
             raise RuntimeError(
@@ -616,10 +619,7 @@ async def get_job_log(
         raise ValueError("job_id must be positive")
     cap = max(1_000, min(tail_bytes, gitlab.max_text_bytes))
     url = f"{gitlab.base_url}/api/v4/projects/{_project_id(project)}/jobs/{job_id}/trace"
-    async with httpx.AsyncClient(
-        headers=gitlab._headers(), verify=gitlab.verify_ssl,
-        trust_env=gitlab.trust_env, follow_redirects=False, timeout=gitlab.timeout,
-    ) as client:
+    async with gitlab._client() as client:
         trace = await aread_trace_tail(client, url, tail_bytes=cap, timeout_seconds=gitlab.timeout)
     return {"project": project, "job_id": job_id, **trace}
 
