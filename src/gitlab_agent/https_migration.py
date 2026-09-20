@@ -88,19 +88,22 @@ def _inside(root: Path, path: Path) -> Path:
     return path
 
 
-def _git_env() -> dict[str, str]:
+def _git_env(config: dict[str, str] | None = None) -> dict[str, str]:
     # Shell-injected Git configuration could hide a destination rewrite. Refuse
     # it rather than silently inspecting a different environment than workers.
+    # Normal ReasonFirst launches load all .env keys before starting Git.
+    # Inspect that effective environment too, not only this maintenance shell.
+    source = {**(config or {}), **os.environ}
     rejected = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CONFIG",
                 "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL",
                 "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM"}
-    if any(k in os.environ for k in rejected):
+    if any(k in source for k in rejected):
         raise MigrationError("Unset Git configuration/path override variables before migration")
-    if os.getenv("GIT_SSL_NO_VERIFY", "").lower() not in {"", "0", "false", "no"}:
+    if source.get("GIT_SSL_NO_VERIFY", "").lower() not in {"", "0", "false", "no"}:
         raise MigrationError("Unset GIT_SSL_NO_VERIFY; migration requires certificate verification")
-    if os.getenv("GIT_SSL_CAINFO") or os.getenv("GIT_SSL_CAPATH"):
+    if source.get("GIT_SSL_CAINFO") or source.get("GIT_SSL_CAPATH"):
         raise MigrationError("Environment-only Git CA settings need separate TLS review before migration")
-    env = {k: v for k, v in os.environ.items()
+    env = {k: v for k, v in source.items()
            if not k.upper().startswith("GIT_")
            and not any(s in k.upper() for s in ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY"))}
     env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
@@ -330,7 +333,7 @@ def build_plan(*, config_file: Path, old_url: str, new_url: str) -> MigrationPla
     allowed = {x.strip() for x in allowed_raw.split(",") if x.strip()}
     if not allowed:
         raise MigrationError("An explicit project allowlist is required for migration")
-    _git_env()
+    _git_env(config)
     policy = {"verify": verify, "allowed": sorted(allowed), "exported_base": exported,
               "selected_config": selected, "workspace_root": str(root)}
     changes: list[FileChange] = []
