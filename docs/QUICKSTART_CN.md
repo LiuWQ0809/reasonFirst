@@ -113,7 +113,7 @@ resume 返回 handoff，不自动运行 agent。成功或 docs-only pipeline 不
 
 HTTPS 迁移遵循“离线 preview → 无凭证 TLS 检查 → 停止 writer/MCP → 确认 apply → no-op 复查 → API/Git/已有工作区验收”。普通 preview 没有 `--dry-run` 参数，因为默认就是 preview。备份中可能含真实凭证，不能上传。
 
-TLS probe 的 401 可以表示证书握手成功但请求未认证；不证明 API token、Git push 或 MCP 连接成功。当前尚未实现统一运行时私有 CA 配置和通用 authenticated redirect 限制。详见[中文迁移指南](HTTPS_MIGRATION_CN.md)与[安全文档](../SECURITY.md)。
+TLS probe 的 401 可以表示证书握手成功但请求未认证；不证明 API token、Git push 或 MCP 连接成功。Python API/MCP 现已共用校验证书的 SSLContext，支持用户级 `GITLAB_CA_BUNDLE` 增加私有 CA，并拒绝关闭校验及所有 API 重定向。它不配置原生 Git，也不改变迁移工具 `--check-tls` 的默认信任库。公共 CA 已可信的安装通常无需新增 CA 设置。原生 Git 策略和分层诊断仍待完善。详见[运行时 TLS](HTTPS_API_TLS_CN.md)、[中文迁移指南](HTTPS_MIGRATION_CN.md)与[安全文档](../SECURITY.md)。
 
 MCP/tunnel 是可选独立链路。使用既有 launcher 与正确配置重启，并另行验证读取。单独启动 `run_mcp.sh` 不等于恢复了隧道。旧[详细团队指南](ONBOARDING_GUIDE_CN.md)中的部署范例需要结合当前 provider 文档使用。
 

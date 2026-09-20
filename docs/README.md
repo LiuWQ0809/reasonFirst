@@ -11,6 +11,7 @@ These guides describe the source revision containing them. A merged feature is n
 | 当前中文安装与使用 | [中文快速上手](QUICKSTART_CN.md) |
 | Architectural intent | [Design philosophy](DESIGN_PHILOSOPHY.md) |
 | HTTP-to-HTTPS migration | [English](HTTPS_MIGRATION.md) / [中文](HTTPS_MIGRATION_CN.md) |
+| API/MCP private-CA trust, redirects, and native Git boundaries | [English](HTTPS_API_TLS.md) / [中文](HTTPS_API_TLS_CN.md) |
 | PR checkout, tests, and normal-install updates | [Local PR review](LOCAL_PR_REVIEW.md) |
 | Contribution process | [Contributing](../CONTRIBUTING.md) |
 | Security reporting and current limitations | [Security policy](../SECURITY.md) |
@@ -18,7 +19,7 @@ These guides describe the source revision containing them. A merged feature is n
 
 ## Optional client/deployment recipes
 
-[MCP setup (English)](SETUP_TUTORIAL.md), [MCP 配置（中文）](SETUP_TUTORIAL_CN.md), and [team tunnel setup](OPENAI_TUNNEL_TEAM_SETUP_CN.md) describe optional reasoning-client connectivity, not prerequisites for the local CLI. Provider availability and UI instructions can change; verify the current provider documentation. These recipes do not enable a local task-execution MCP endpoint.
+[MCP setup (English)](SETUP_TUTORIAL.md), [MCP 配置（中文）](SETUP_TUTORIAL_CN.md), and [team tunnel setup](OPENAI_TUNNEL_TEAM_SETUP_CN.md) describe optional reasoning-client connectivity, not prerequisites for the local CLI. Provider availability and UI instructions can change; verify the current provider documentation. These recipes do not enable a local task-execution MCP endpoint. Apply the current [runtime TLS guide](HTTPS_API_TLS.md) to their transport configuration: API redirects and disabled verification are no longer accepted, and native Git remains separate.
 
 [Chinese onboarding](ONBOARDING_GUIDE_CN.md) contains detailed deployment recipes. Where older lower-level task/commit/push examples differ, use the current quickstart's `start -> finish -> ci -> resume` path and the current security policy. [Troubleshooting](TROUBLESHOOTING.md) retains earlier operational notes; an HTTP example is not the preferred configuration for a new installation.
 

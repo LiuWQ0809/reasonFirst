@@ -20,6 +20,7 @@ The goal is to spend reasoning capacity on architecture, diagnosis, and review, 
 | 中文安装与日常使用 | [当前中文快速上手](docs/QUICKSTART_CN.md) |
 | Understand the architecture | [Design philosophy](docs/DESIGN_PHILOSOPHY.md) |
 | Move an existing GitLab installation to HTTPS | [English migration guide](docs/HTTPS_MIGRATION.md) · [中文迁移指南](docs/HTTPS_MIGRATION_CN.md) |
+| Configure API/MCP certificates and understand redirect errors | [Runtime TLS](docs/HTTPS_API_TLS.md) · [中文](docs/HTTPS_API_TLS_CN.md) |
 | Check out a PR directly, without ZIP files | [Local PR review](docs/LOCAL_PR_REVIEW.md) |
 | Contribute or report a problem | [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md#reporting-a-security-issue) |
 | Find current versus historical documentation | [Documentation index](docs/README.md) |
@@ -105,9 +106,12 @@ The last documented release is **v0.3.0**. Post-release changes below are merged
 | Command results | Nonzero child failures and timeouts propagate to the shell |
 | CI feedback | Matching-HEAD evidence and shared bounded/sanitized CLI/MCP failed-job logs |
 | HTTPS migration | Explicit offline preview and confirmed local URL updates, with private backups and forward recovery |
+| API/MCP transport | Verified public roots plus optional Python-only private CA; request-destination checks and rejection of all API redirects |
 | Read-only MCP | Project/file/MR/pipeline/job inspection; no local task execution endpoint |
 
-**Not yet delivered:** shared runtime private-CA configuration, general authenticated redirect hardening, consistent project context on every handoff route, general workspace locking/transactional recovery, persistent TaskSpec/attempt records, and EvidencePack access. The migration-only lock does not provide these capabilities. [HTTPS work](https://github.com/phoenixjyb/reasonFirst/issues/10) and the [task-loop roadmap](https://github.com/phoenixjyb/reasonFirst/issues/6) track them.
+**Not yet delivered:** native Git trust/destination-policy integration and layered API-versus-Git diagnostics, consistent project context on every handoff route, general workspace locking/transactional recovery, persistent TaskSpec/attempt records, and EvidencePack access. The migration-only lock does not provide these capabilities. [HTTPS work](https://github.com/phoenixjyb/reasonFirst/issues/10) and the [task-loop roadmap](https://github.com/phoenixjyb/reasonFirst/issues/6) track them.
+
+**Transport upgrade:** Python API/MCP clients now reject `GITLAB_VERIFY_SSL=false` and every API redirect, including same-origin redirects. Configure the final endpoint directly. For a private CA, `GITLAB_CA_BUNDLE` adds certificates to public roots without enabling proxy inheritance. It does not configure native Git or the migration command’s optional `--check-tls` probe. Publicly trusted deployments normally need no extra CA setting. See [runtime TLS](docs/HTTPS_API_TLS.md).
 
 ## Names and compatibility
 

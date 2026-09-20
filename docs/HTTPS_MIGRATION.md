@@ -2,7 +2,7 @@
 
 [中文指南](HTTPS_MIGRATION_CN.md) · [Quickstart](ACTUAL_CODER_QUICKSTART.md) · [Security](../SECURITY.md)
 
-The merged `actual-coder-migrate-https` command upgrades **local** configuration, cached Git URLs, and matching saved MR links. It does not configure GitLab's server, change token scopes, or implement shared runtime private-CA trust. Use a source revision that includes the command; `v0.3.0` by itself does not include this later addition.
+The merged `actual-coder-migrate-https` command upgrades **local** configuration, cached Git URLs, and matching saved MR links. It does not configure GitLab's server, change token scopes, or install trust material. Python API/MCP private-CA support and redirect protection are described separately in [runtime TLS](HTTPS_API_TLS.md); native Git retains its own configuration. Use a source revision that includes the command; `v0.3.0` by itself does not include this later addition.
 
 ## Supported scope
 
@@ -54,7 +54,7 @@ Repeat the same preview command with `--check-tls`. Optionally add `--plan-diges
 | Redirect | Check the canonical endpoint/reverse proxy; no redirect is followed |
 | Verification/connectivity error | Investigate CA/chain, hostname, expiry, DNS, routing or VPN; do not disable verification |
 
-`ok: true` is not end-to-end readiness. `api_auth_checked` and `git_tls_checked` remain false. A private CA working in a browser does not prove Python/Git trust. This maintenance probe has no custom-CA CLI option; shared runtime CA support remains in [Issue #10](https://github.com/phoenixjyb/reasonFirst/issues/10).
+`ok: true` is not end-to-end readiness. `api_auth_checked` and `git_tls_checked` remain false. A private CA working in a browser does not prove Python/Git trust. This maintenance probe has no custom-CA CLI option and does not read `GITLAB_CA_BUNDLE`. Python API/MCP clients now support that setting, so a private-CA API request can work while this default-trust probe still fails. Do not disable verification to reconcile them. See [runtime TLS](HTTPS_API_TLS.md); native Git integration remains in [Issue #10](https://github.com/phoenixjyb/reasonFirst/issues/10).
 
 ## 4. Apply only the reviewed local changes
 
@@ -116,4 +116,4 @@ uv run python -m unittest discover -s tests -v
 uv run python scripts/check_repo_secrets.py --history
 ```
 
-The tests use temporary repositories and freshly generated loopback TLS certificates. Current normal API/Git runtime private-CA and authenticated redirect policy are separate unfinished work; the migration probe's behavior must not be generalized to every client. A successful migration on one host does not certify other platforms, instances, or trust backends.
+The tests use temporary repositories and freshly generated loopback TLS certificates. Python API/MCP private-CA support and rejection of all API redirects are now implemented separately; native Git trust/destination-policy integration and layered diagnostics remain unfinished. The migration probe's behavior must not be generalized to every client. A successful migration on one host does not certify other platforms, instances, or trust backends.
