@@ -1,226 +1,181 @@
-# ReasonFirst / ActualCoder Quickstart
+# ReasonFirst / ActualCoder quickstart
 
-> **ReasonFirst** is the project/product. **ActualCoder** is its local coding orchestration engine and CLI.
->
-> For the architecture and rationale, see [ReasonFirst Design Philosophy](DESIGN_PHILOSOPHY.md). 团队成员如需完整安装、凭证、安全、日常开发、MR 恢复和故障排查流程，请使用 [ONBOARDING_GUIDE_CN.md](ONBOARDING_GUIDE_CN.md)。
+This is the current source-checkout guide. [中文上手](QUICKSTART_CN.md) · [Documentation index](README.md) · [Security boundaries](../SECURITY.md).
 
-ReasonFirst uses a strong reasoning interface to lead software work and delegates high-volume implementation to replaceable coding agents. ActualCoder is the agent-neutral execution/control layer that turns those tasks into isolated, reviewable development workflows.
+Use a trusted personal development machine and repositories you are authorized to access. Worktrees and executable allowlists are not a sandbox. Stop on errors; do not turn off TLS verification or broaden permissions to make a check pass.
 
-The older `codingagent` CLI remains a compatibility alias for existing workflows.
+## 1. Try the code before adding credentials
 
-ActualCoder separates:
-
-- **coding backend** — Codex CLI, GitHub Copilot CLI, or future agents;
-- **workspace / GitLab control** — `gitlab-agent`, which owns isolated worktrees,
-  tests, diffs, commits, feature-branch push, Merge Request creation/update, and recovery.
-
-The project itself makes no OpenAI model API calls.
-
-## 1. Install
-
-From the repository `main` branch:
+Prerequisites: Git, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Python. Use Python 3.12 to match CI; metadata permits 3.10+, which is not the same as a tested interpreter matrix.
 
 ```bash
-git checkout main
-git pull
-uv sync
+git clone https://github.com/phoenixjyb/reasonFirst.git
+cd reasonFirst
+uv sync --python 3.12
+uv run actual-coder --help
+uv run actual-coder-migrate-https --help
+uv run python -m unittest discover -s tests -v
+uv run python scripts/check_repo_secrets.py --history
+```
+
+No production account is required for these tests. See [local PR review](LOCAL_PR_REVIEW.md) to use an existing checkout instead of downloading archives. Use `uv run` inside this source directory while testing; a global command may point at a different installation.
+
+## 2. Create a user-owned configuration
+
+Choose the stable user path `~/.config/gitlab-agent/.env`, outside managed repositories. **Never overwrite an existing working config with the example.** Existing HTTP installations should follow the [migration guide](HTTPS_MIGRATION.md), not start again.
+
+On macOS/Linux, from the source checkout, this creates a private example only when the file does not exist:
+
+```bash
+(
+set -eu
+umask 077
+mkdir -p "$HOME/.config/gitlab-agent"
+chmod 700 "$HOME/.config/gitlab-agent"
+test ! -e "$HOME/.config/gitlab-agent/.env"
+cp .env.example "$HOME/.config/gitlab-agent/.env"
+chmod 600 "$HOME/.config/gitlab-agent/.env"
+)
+```
+
+If the file already exists, the block stops. Edit that existing file deliberately rather than deleting it. Use a local editor to set your real endpoint and tokens; never paste tokens into a shell command, URL, issue, or chat transcript.
+
+On Windows PowerShell, create and restrict an empty file before adding secrets. Run from the source checkout:
+
+```powershell
+$ConfigDir = Join-Path $HOME ".config\gitlab-agent"
+$ConfigFile = Join-Path $ConfigDir ".env"
+New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
+if (Test-Path $ConfigFile) { throw "Config already exists; inspect it instead of overwriting it." }
+New-Item -ItemType File -Path $ConfigFile -ErrorAction Stop | Out-Null
+$Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$Acl = New-Object System.Security.AccessControl.FileSecurity
+$Acl.SetAccessRuleProtection($true, $false)
+$Rule = New-Object System.Security.AccessControl.FileSystemAccessRule($Identity, "FullControl", "Allow")
+$Acl.AddAccessRule($Rule)
+Set-Acl -Path $ConfigFile -AclObject $Acl -ErrorAction Stop
+Get-Content -LiteralPath .env.example -Raw | Set-Content -LiteralPath $ConfigFile -Encoding utf8
+notepad $ConfigFile
+```
+
+Use a local personal filesystem. If ACL setup fails, stop before entering secrets; do not assume Windows `chmod` is equivalent.
+
+Essential settings, using **illustrative** values only:
+
+```dotenv
+GITLAB_BASE_URL=https://gitlab.example.com
+GITLAB_TOKEN=REPLACE_ME
+GITLAB_GIT_TOKEN=
+GITLAB_ALLOWED_PROJECTS=team/project-a
+GITLAB_VERIFY_SSL=true
+GITLAB_TRUST_ENV=false
+GITLAB_GIT_TRUST_ENV=false
+GITLAB_REQUIRE_WRITE_ALLOWLIST=true
+GITLAB_WORKSPACE_ROOT=~/.local/share/chatgpt-gitlab-mcp
+```
+
+Use a dedicated read API credential (`read_api` and, where needed, `read_repository`). For Git writes, prefer a separate `GITLAB_GIT_TOKEN` with `write_repository`, not a broad `api` token. Empty Git-token configuration falls back to the API token; that does not magically give it push rights. Restrict the project allowlist to exact intended `path_with_namespace` values. Install/authenticate Codex CLI or Copilot CLI separately using the provider's supported flow; ReasonFirst does not manage their accounts.
+
+Configuration file selection: `GITLAB_AGENT_ENV_FILE`, then the user config above, then a local `.env`. CLI fallback is relative to its working directory; MCP's fallback is relative to its server source directory. Already-exported variables take precedence over the file. Use simple literal assignments; do not rely on shell interpolation or inline comments in values.
+
+On macOS/Linux, explicitly select the file for this shell:
+
+```bash
+export GITLAB_AGENT_ENV_FILE="$HOME/.config/gitlab-agent/.env"
+```
+
+On PowerShell:
+
+```powershell
+$env:GITLAB_AGENT_ENV_FILE = Join-Path $HOME ".config\gitlab-agent\.env"
+```
+
+## 3. Verify API and Git separately
+
+```bash
+uv run actual-coder config
+uv run actual-coder agents
+uv run actual-coder doctor
+uv run actual-coder project-config team/project-a --validate
+```
+
+Inspect `config` locally; even token-free diagnostics can expose private hostnames and paths. `agents` checks executable presence, not authentication/quota. `doctor` checks API authentication unless `--offline`; it does not test Git push rights. `project-config` performs managed Git fetch/read and validates the contract, without creating a worktree or pushing.
+
+`found: false, valid: true` means `.actualcoder.yaml` is absent, not that application tests passed. No project-specific validation commands were loaded. Copy and adapt [the example contract](../.actualcoder.example.yaml) **in the target GitLab project**, use its actual test commands, and review it through that project's normal process. Validate a candidate without fetching it:
+
+```bash
+uv run actual-coder project-config team/project-a --file .actualcoder.example.yaml --validate
+```
+
+The example uses a Python/pytest command; it is not a universal contract. Repository settings cannot expand your executable allowlist. Finish reads policy from the workspace's original base commit, so a newly approved contract applies to a new task based on that commit, not automatically to old workspaces.
+
+## 4. Prepare, implement, review, finish
+
+Define the goal, non-goals, and acceptance criteria with your reasoning interface first. Prepare without launching a coding model:
+
+```bash
+uv run actual-coder start team/project-a --task fix-timeout --goal "Fix the timeout bug; preserve the API and add regression coverage" --no-launch
+```
+
+This fetches project context and creates a worktree. Save the returned workspace ID. Inspect the handoff and use its returned backend command/prompt. On a new task, omit `--no-launch` to launch interactively; add `--agent codex` or `--agent copilot` to select explicitly. No existing-workspace ID is accepted by `start`.
+
+After edits, set `WS` to the returned ID, not the illustrative value below:
+
+```bash
+WS="012345abcdef"
+uv run actual-coder status "$WS"
+uv run actual-coder finish "$WS" --message "fix: handle timeout and add regression coverage" --dry-run
+```
+
+**Dry-run executes configured validation commands and may therefore change local files.** It does not commit or push. Inspect tests, diff, protected-path findings, secret coverage, and the proposed MR target. Then, only for an unblocked intentional change:
+
+```bash
+uv run actual-coder finish "$WS" --message "fix: handle timeout and add regression coverage"
+uv run actual-coder ci "$WS"
+```
+
+Finish asks for human confirmation. First controlled publication creates an MR; later finishes update its recorded branch/MR. `--yes` is explicit scripted confirmation, not a way around validation. `--allow-secret-match` is only for reviewed false positives and cannot override incomplete history coverage. A real secret must be revoked and removed from unpublished history, not merely deleted in a new commit.
+
+If CI truly fails, prepare the next handoff:
+
+```bash
+uv run actual-coder resume "$WS" --agent auto --from-ci --goal "Repair the matching-head CI failure without unrelated changes"
+```
+
+`resume` returns a prompt and launch command; it does not run the coding agent or repair code. Inspect the handoff: all routes do not yet propagate identical project context. Keep the original goal and acceptance criteria yourself until persistent TaskSpec support lands. Do not use a stale or docs-only pipeline as proof of a full application build. Review and merge the MR in GitLab outside ReasonFirst; the controller has no merge operation.
+
+## 5. Recovery and low-level commands
+
+Prefer `status`/`resume` for an existing workspace. Only when local state is unavailable and the feature branch remains on GitLab, use the existing MR:
+
+```bash
+uv run actual-coder checkout-mr team/project-a 123 --agent copilot --goal "Continue this MR and address reviewed feedback"
+```
+
+Replace the project/IID and review the returned handoff. Recovery refuses to overwrite an abandoned local branch with unpublished commits. Normal `cleanup` checks dirty state and fresh publication evidence; offline/deleted-remote cases can deliberately block it. `cleanup --force` discards local work and is not an installation repair command.
+
+The `task`, `commit`, `push`, `push-update`, and `push-mr` commands remain compatibility/manual routes. **They do not collectively enforce the full finish gate.** Some generated prompts still mention these commands; review their proposed writes rather than assuming every worker action is intercepted. See [security boundaries](../SECURITY.md).
+
+## 6. Use global commands from a stable checkout
+
+Optional macOS/Linux installation, from your long-lived source checkout:
+
+```bash
 bash scripts/install_user.sh
-```
-
-Copy the working configuration once:
-
-```bash
-mkdir -p ~/.config/gitlab-agent
-cp .env ~/.config/gitlab-agent/.env
-chmod 700 ~/.config/gitlab-agent
-chmod 600 ~/.config/gitlab-agent/.env
-```
-
-Verify from any directory:
-
-```bash
-actual-coder --help
 actual-coder config
-actual-coder agents
-gitlab-agent --help
+actual-coder-migrate-https --help
 ```
 
-`actual-coder agents` only checks whether supported CLI executables are installed.
-It does not launch Codex/Copilot, check authentication, or consume model quota.
+On PowerShell:
 
-## 2. Start a task with Codex
-
-```bash
-actual-coder task team/project-a \
-  --agent codex \
-  --base-ref main \
-  --task fix-timeout \
-  --goal "Fix the timeout bug and add regression coverage"
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_user.ps1
+actual-coder config
+actual-coder-migrate-https --help
 ```
 
-The JSON result includes:
+The installers use editable `uv tool install` and may replace existing command entry points. They do not overwrite an existing user config; Windows config ACLs must be established separately. A global editable installation follows this checkout's code, not an immutable released wheel. Keep the source directory and interpreter; do not install globally from a temporary PR checkout that you will remove. Use the [update/PR guide](LOCAL_PR_REVIEW.md).
 
-```text
-workspace
-worktree_path
-agent: codex
-agent_command
-agent_prompt
-```
+## 7. Optional reasoning-client integration
 
-For Codex, the older `codex_command` / `codex_prompt` aliases remain available for compatibility.
-
-## 3. Start a task with GitHub Copilot CLI
-
-```bash
-actual-coder task team/project-a \
-  --agent copilot \
-  --base-ref main \
-  --task fix-timeout \
-  --goal "Fix the timeout bug and add regression coverage"
-```
-
-The handoff command will look like:
-
-```bash
-cd ~/.local/share/chatgpt-gitlab-mcp/worktrees/<workspace-id> && copilot
-```
-
-ActualCoder does not require the repository to be hosted on GitHub. Copilot works
-against the local worktree while `gitlab-agent` continues to manage the
-self-hosted GitLab branch/MR lifecycle.
-
-## 4. Agent-neutral lifecycle
-
-After either backend edits the worktree:
-
-```bash
-WS=<workspace-id>
-
-gitlab-agent status "$WS"
-gitlab-agent run "$WS" -- <allowed-test-command>
-gitlab-agent diff "$WS"
-gitlab-agent commit "$WS" -m "Describe the change"
-```
-
-First push + MR creation:
-
-```bash
-gitlab-agent push-mr "$WS" \
-  --target main \
-  --title "Describe the change" \
-  --description-file /tmp/mr.md
-```
-
-Further iterations on the same MR:
-
-```bash
-gitlab-agent push-update "$WS"
-```
-
-## 5. Resume with a different coding backend
-
-The backend is not stored as a permanent property of the workspace. You can switch
-agents between iterations.
-
-For example, start with Codex:
-
-```bash
-actual-coder task team/project-a \
-  --agent codex \
-  --task fix-timeout \
-  --goal "Implement the initial fix"
-```
-
-Then later resume the same workspace with Copilot:
-
-```bash
-actual-coder resume "$WS" \
-  --agent copilot \
-  --goal "Review the previous change, address feedback, and rerun tests"
-```
-
-Or switch back:
-
-```bash
-actual-coder resume "$WS" \
-  --agent codex \
-  --goal "Finish the remaining test failure"
-```
-
-## 6. Recover an existing remote MR
-
-If the local worktree was cleaned up:
-
-```bash
-actual-coder checkout-mr team/project-a 123 \
-  --agent copilot \
-  --goal "Resume this existing MR and address review feedback"
-```
-
-ActualCoder reads the MR metadata through the configured GitLab API token,
-reconstructs the source branch as a managed worktree, remembers the existing MR
-URL, and emits a new agent handoff.
-
-You can equally recover it for Codex:
-
-```bash
-actual-coder checkout-mr team/project-a 123 \
-  --agent codex \
-  --goal "Continue this existing MR"
-```
-
-## 7. Safety model
-
-ActualCoder v0.3 keeps and extends the previously validated safety boundaries:
-
-- explicit project allowlist by default;
-- generated / reconstructed branches must use the configured safe branch prefix;
-- no direct base-branch push;
-- no force push;
-- no merge / approve / remote-branch-delete operation;
-- build/test runner uses an executable allowlist and `shell=False`;
-- obvious secret/token variables are stripped from runner subprocesses;
-- Git credentials are passed through temporary askpass rather than embedded in remotes;
-- the host runner is constrained execution, not a VM/container sandbox.
-
-## 8. Check installed coding backends
-
-```bash
-actual-coder agents
-```
-
-Example:
-
-```json
-{
-  "agents": [
-    {
-      "agent": "codex",
-      "executable": "codex",
-      "installed": true,
-      "path": "/path/to/codex",
-      "authentication_checked": false
-    },
-    {
-      "agent": "copilot",
-      "executable": "copilot",
-      "installed": true,
-      "path": "/path/to/copilot",
-      "authentication_checked": false
-    }
-  ]
-}
-```
-
-## 9. Current backends
-
-v0.3.0 supports:
-
-```text
-codex
-copilot
-```
-
-The backend mapping is intentionally small and explicit. Future agents can be added
-without changing the GitLab/worktree machinery.
+The local CLI does not require an MCP tunnel. The read-only MCP server can expose GitLab repository, MR, and CI reads to a compatible reasoning client. It is not a local-task execution API. Starting `run_mcp.sh` alone is not a complete tunnel setup. The [MCP setup tutorial](SETUP_TUTORIAL.md) and [team tunnel guide](OPENAI_TUNNEL_TEAM_SETUP_CN.md) describe an optional deployment; verify current provider eligibility and installation instructions before following provider-specific steps. Never share tunnel runtime credentials.

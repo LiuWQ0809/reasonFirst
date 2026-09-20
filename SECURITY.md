@@ -1,96 +1,71 @@
-# ReasonFirst Security Notes
+# ReasonFirst security policy and boundaries
 
-ReasonFirst connects a reasoning interface to local coding backends through the ActualCoder control plane and, today, to private/self-hosted GitLab. Treat the reasoning/MCP host, local worktrees, coding-agent sessions, repository-controlled build/test code, and credentials as security-sensitive.
+ReasonFirst operates near repository code, host files, coding-agent sessions, and GitLab credentials. Use it on trusted development hosts with repositories you are authorized to access. It is early-stage developer tooling, not a sandbox or a multi-tenant execution service.
 
-The product philosophy deliberately separates **intelligence from authority**: a capable reasoning/coding model does not automatically receive unrestricted filesystem, credential, Git, or merge authority.
+## Reporting a security issue
 
-## Never commit
+Do not disclose vulnerabilities, credentials, private endpoints, or exploit details in public issues, PRs, discussions, or logs.
 
-- `.env`
-- a real `GITLAB_TOKEN`
-- a real `GITLAB_GIT_TOKEN`
-- `CONTROL_PLANE_API_KEY`
-- `OPENAI_API_KEY`
-- private certificates/keys
-- copied CI logs or source files containing secrets
+Use the repository's GitHub **Security -> Advisories -> Report a vulnerability** workflow when that private channel is enabled. This document does not imply that the repository setting is enabled: maintainers must verify it before promoting the project. If no private reporting option is available, request a private contact channel in a public issue **without technical details, secrets, affected private hostnames, or proof-of-concept attachments**, and wait for a private route before sharing the report. Do not invent a security email address.
 
-## Least privilege
+Privately include the affected commit/version, a synthetic reproduction, impact, and proposed mitigation. Revoke a real exposed credential immediately rather than waiting for a code fix. Maintainers have not committed to an incident-response SLA or long-term backport policy; confirm affected refs rather than assuming all historical tags are supported.
 
-For the read MCP, use a dedicated read-only identity/token and restrict projects with `GITLAB_ALLOWED_PROJECTS`.
+## Credentials and outbound data
 
-For ActualCoder Git writes, prefer a separate Git credential with `write_repository` rather than upgrading the read API token to broad `api` scope.
+Keep `.env`, GitLab/Git tokens, tunnel runtime credentials, private keys/certificates, managed-workspace metadata, and migration backups outside version control. Migration backups include exact copies of configuration and may contain tokens; never upload them as a bug-report bundle.
 
-## Workspace safety
+Prefer a dedicated read-only API identity, a separate Git credential with only necessary repository-write rights, and explicit project allowlists. An unset Git token falls back to the API token; scope is not upgraded. Askpass avoids embedding tokens in Git remote URLs, but the local user/host can still access configured secrets. API-side allowlisting is not a substitute for GitLab permissions.
 
-The local coding engine:
+ReasonFirst itself does not call model-inference endpoints. External coding agents and reasoning clients can send code, prompts, or tool output to their providers under their own settings. A local controller does not make the complete workflow offline or private. Only expose code to those tools when authorized. The optional MCP bridge makes approved read results available to its client; run it behind an appropriate authenticated transport and read-only service identity.
 
-- creates isolated worktrees under `GITLAB_WORKSPACE_ROOT`;
-- generates feature branches with a configured prefix;
-- refuses direct base-branch pushes;
-- never force-pushes;
-- requires a project allowlist by default;
-- blocks file paths escaping the worktree;
-- uses dedicated Git operations instead of arbitrary Git shell commands.
+## Control-plane protections and their limits
+
+Managed paths and branches are checked by supported controller operations. The controller creates feature branches, avoids force-push/base-branch publication, and has no MR approve/merge/deploy operation. These controls govern that interface, not arbitrary commands executed by the same local user, editor, coding agent, or build script.
+
+The high-level `finish` path reads project policy from the immutable workspace base, executes configured validations, checks reviewability/protected paths, scans candidate and bounded history additions, then requests confirmation. Low-level `commit`/`push` commands do not run the entire finish gate. Some generated handoffs still describe those manual routes; review the worker's actions rather than assuming the controller intercepts all writes.
+
+`.actualcoder.yaml` cannot add local executable permissions. A missing contract is valid but supplies no project-specific tests. Editing the contract inside a task does not replace the original base policy for that task. Treat policy/CI/build changes as sensitive review items.
 
 ## Build/test execution is not a sandbox
 
-`gitlab-agent run` constrains the executable, cwd, timeout, output, and environment, and strips obvious secret variables.
+An approved `python`, `uv`, `npm`, `make`, or test runner can execute arbitrary repository-controlled code, read other host paths, and make network requests. Stripping obvious environment secrets is not isolation from filesystem credentials or network services. The general runner's displayed output cap is not a guarantee of bounded subprocess buffering; process-tree termination and resource isolation remain follow-up work.
 
-It does **not** provide OS/container filesystem isolation. Repository build scripts are code execution. A malicious Makefile, package lifecycle script, Python test, package-manager lifecycle hook, or binary can attempt to read other host files using absolute paths or make network requests.
+`finish --dry-run` runs validation commands and may change files. It means no commit/push, not no execution. `start --no-launch` creates local state and may fetch repositories; it means no coding-agent launch. The HTTPS maintenance preview is different: it inspects local inputs without changing live endpoint/state/ref files; `--check-tls` explicitly opts into a network probe.
 
-The same boundary applies to v0.3 `.actualcoder.yaml` validation commands. The repository contract cannot expand `GITLAB_ALLOWED_EXECUTABLES`, but an already-approved executable such as `uv`, `python`, `make`, `npm`, or `pytest` can still execute repository-controlled code.
+Use an independently secured disposable VM/container for untrusted code, with restricted mounts, credentials, network, and host access. ReasonFirst does not configure that isolation for you. Do not treat a Git worktree as an OS security boundary.
 
-Therefore:
+## Prompt injection and evidence
 
-- review/protect `.actualcoder.yaml` like build/CI configuration;
-- use `actual-coder project-config PROJECT --validate` to inspect the effective contract;
-- understand that `actual-coder finish --dry-run` means **no Git commit/push**, not “no code execution” — configured validation commands still run;
-- run untrusted or externally supplied repositories in a container/VM or on a disposable host.
+Repository instructions, MRs, build output, and CI logs are untrusted inputs, not authorization to change the goal or weaken tests. Explicit trust labels and shared log sanitization are defense in depth, not a guarantee of model behavior.
 
-## Prompt injection
+CI results are associated with a reported SHA. `resume --from-ci` rejects stale pipeline evidence. Matching HEAD alone does not validate later dirty files, prove all jobs ran, or establish a full build when the pipeline was docs-only. Never claim complete logs when the reader reports incomplete/limited coverage.
 
-Repository files, MR descriptions, issues, build output, project-contract instructions, and CI logs can contain instructions intended to manipulate an AI system.
+## Secret-scan scope
 
-v0.3 applies explicit trust boundaries:
+Finish checks candidate diff additions and added text in `base_sha..HEAD`, including separate merge-parent diffs. The history scan is bounded; unsupported/incomplete history blocks finish even with a secret-match override. It is not an audit of pre-base history, commit messages, external LFS content, arbitrary secret encodings, or every candidate blob/filter/index interaction. `--allow-secret-match` is for explicitly reviewed false positives, not real credentials or missing evidence.
 
-- `.actualcoder.yaml` guidance is labeled repository-owned and subordinate to the user goal / ActualCoder rules;
-- `.actualcoder.yaml` is a built-in protected path in `actual-coder finish`;
-- project contracts are size/cardinality bounded and reject duplicate YAML keys;
-- CI logs are labeled untrusted diagnostic data, ANSI-cleaned, size-capped, and credential-redacted before entering a coding-agent prompt;
-- `resume --from-ci` refuses CI whose pipeline SHA does not match the workspace HEAD.
+Findings omit offending source lines, and displayed finish diffs are sanitized. Raw state fingerprints still bind the reviewed input. A redaction heuristic cannot guarantee removal of every secret from every diagnostic; review all material before public posting.
 
-These are defense-in-depth controls, not a guarantee that model behavior cannot be influenced by malicious text. Keep the ChatGPT MCP read-only on personal Pro, review ActualCoder backend actions, preserve project/branch allowlists, and avoid exposing unrelated secrets to build/test processes.
-
-## Workspace concurrency and state
-
-Managed workspace state is local and persistent, but v0.3 does not yet implement per-workspace process locking. Do not run concurrent mutating ActualCoder/gitlab-agent commands against the same workspace from multiple terminals/processes.
-
-`actual-coder finish` fingerprints the reviewed post-validation workspace state and re-checks it immediately before commit/push, which closes the review-to-write change window for that workflow. General workspace locking/crash-recovery remains planned for a later release.
-
-## HTTP GitLab
-
-HTTP can work on a trusted private network, but it does not encrypt the MCP/CLI host-to-GitLab hop. Tokens and repository contents can be observed by an attacker on that network segment. Prefer HTTPS when possible.
-
-## Repository secret scanning
-
-Before pushing or sharing changes, run:
-
-```bash
-uv run python scripts/check_repo_secrets.py
-```
-
-For a release/security audit, scan the full available Git history:
+The repository audit is a separate development tool:
 
 ```bash
 uv run python scripts/check_repo_secrets.py --history
 ```
 
-CI performs the history scan with a full Git checkout. The scanner checks high-signal token formats, private-key blocks, credential-bearing URLs, real-looking Secure MCP tunnel IDs, and developer-specific absolute home paths.
+It checks tracked text files and full **available HEAD history**. It does not audit every remote branch/tag, PR comment, release asset, external service, or dependency. Known historical test-fixture exceptions are not permission to add real credentials. A green check is useful evidence, not a full security certification. See the [public-release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md).
 
-This is defense in depth, not a substitute for credential rotation. If a real secret is ever committed, **revoke/rotate it first**, then rewrite/remove it from repository history before distributing the repository.
+## HTTPS and certificate trust
 
-## Zero OpenAI model API usage
+Configure HTTPS directly. An HTTP-to-HTTPS redirect cannot encrypt a token already sent in the first HTTP request. Keep certificate verification enabled; never use disabled verification or silent HTTP fallback as a repair.
 
-The repository intentionally contains no OpenAI model SDK dependency and does not call OpenAI model endpoints.
+Python HTTPX and Git use separate TLS configuration. `GITLAB_VERIFY_SSL` governs the API client, not every Git setting. With `trust_env=False`, environment CA variables are not a reliable substitute for explicit application support. The merged maintenance tool upgrades approved local URLs; it does not implement shared runtime private-CA configuration or general authenticated redirect restrictions. The narrow unauthenticated probe and the bounded trace readers refuse redirects, but ordinary API/Git runtime behavior must not be inferred from that. Remaining work is tracked in [Issue #10](https://github.com/phoenixjyb/reasonFirst/issues/10).
 
-CI checks Python/project code to help preserve this invariant. The Secure MCP Tunnel runtime credential is separate from model API inference.
+See [HTTPS migration](docs/HTTPS_MIGRATION.md) for separate local-state, certificate, API-auth, Git-read, and MCP acceptance steps. One working deployment is not proof for every TLS backend or private CA.
+
+## Concurrency and recovery
+
+General per-workspace locking and transactional crash recovery are not yet implemented. Do not run concurrent mutating workers against one workspace.
+
+Finish fingerprints the reviewed post-validation state and rechecks it before writes. This detects certain changes; it does **not** close every race window or make commit/push/metadata persistence atomic. Normal cleanup uses fresh publication evidence rather than a historical pushed flag, but remote state can change later. Failed compare-and-delete can leave a preserved branch/metadata needing explicit worktree recovery.
+
+The migration lock coordinates migration processes only. Apply requires other writers stopped, records private before/after files and a journal, and supports inspected forward recovery; it is not an atomic multi-file transaction or a hostile-same-user defense. Windows replacement files use current-user ACLs. Shared/network filesystems are outside this maintenance tool's supported scope.
