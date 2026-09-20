@@ -9,6 +9,8 @@ These guides describe the source revision containing them. A merged feature is n
 | Topic | English | 简体中文 |
 | --- | --- | --- |
 | Product and supported capabilities | [ReasonFirst](../README.md) | [项目说明](../README_CN.md) |
+| Before using a newly proposed GitLab project | [Access preflight and user grants](PROJECT_ACCESS.md) | [项目预检与用户授权](PROJECT_ACCESS_CN.md) |
+| Rehearse ChatGPT, Codex and three rounds of one MR | [Practice lab](PRACTICE_LAB.md) | [实战演练](PRACTICE_LAB_CN.md) |
 | Which interface to use and what each check proves | [Workflow](WORKFLOW.md) | [工作流程](WORKFLOW_CN.md) |
 | Source setup and first controlled task | [Current quickstart](ACTUAL_CODER_QUICKSTART.md) | [快速上手](QUICKSTART_CN.md) |
 | Connect/restart normal ChatGPT's GitLab reads | [Operator guide](SETUP_TUTORIAL.md) | [团队接入与重启](OPENAI_TUNNEL_TEAM_SETUP_CN.md) |
@@ -21,6 +23,10 @@ These guides describe the source revision containing them. A merged feature is n
 | Contribution process | [Contributing](../CONTRIBUTING.md) | [贡献指南](../CONTRIBUTING_CN.md) |
 | Security reporting and current limitations | [Security policy](../SECURITY.md) | [安全策略与边界](../SECURITY_CN.md) |
 | Before announcing a public release | [Maintainer checklist](PUBLIC_RELEASE_CHECKLIST.md) | [公开发布清单](PUBLIC_RELEASE_CHECKLIST_CN.md) |
+
+## New-project access gate
+
+A project name or local folder is not evidence that a remote repository exists or is authorized. For a newly introduced project, the normal ChatGPT flow calls `check_project_access` before bulk reads or a task handoff. On `ok: false`, report the diagnostic and wait for the user/operator. A 404 or empty filtered listing cannot distinguish absent from inaccessible. Per-project authorization belongs to `GITLAB_ALLOWED_PROJECTS` in the local MCP configuration, not OpenAI tunnel settings; grant only after explicit approval and restart the existing MCP. The read-only helper never grants access or creates projects. See the paired access guides above; this gate also applies before following older first-task examples.
 
 ## Translation scope and maintenance
 
