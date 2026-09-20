@@ -8,6 +8,7 @@ import httpx
 if TYPE_CHECKING:
     from .config import AgentSettings
 from .log_evidence import MAX_TAIL_BYTES, read_trace_tail
+from .tls import api_client_options
 
 
 class GitLabAPI:
@@ -30,10 +31,13 @@ class GitLabAPI:
     def _client(self) -> httpx.Client:
         return httpx.Client(
             headers=self._headers(),
-            verify=self.settings.api_verify_ssl,
             trust_env=self.settings.api_trust_env,
-            follow_redirects=True,
             timeout=30.0,
+            **api_client_options(
+                self.settings.gitlab_base_url,
+                verify_ssl=self.settings.api_verify_ssl,
+                ca_bundle=getattr(self.settings, "api_ca_bundle", None),
+            ),
         )
 
     def get_json(

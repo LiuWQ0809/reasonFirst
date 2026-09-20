@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .tls import ca_bundle_path, validate_base_url
+
 
 DEFAULT_ALLOWED_EXECUTABLES = {
     "python",
@@ -93,6 +95,7 @@ class AgentSettings:
     max_file_bytes: int
     git_author_name: str | None
     git_author_email: str | None
+    api_ca_bundle: Path | None = None
 
     @classmethod
     def load(cls) -> "AgentSettings":
@@ -104,6 +107,8 @@ class AgentSettings:
             raise RuntimeError("GITLAB_BASE_URL is required")
         if not base_url.startswith(("http://", "https://")):
             raise RuntimeError("GITLAB_BASE_URL must start with http:// or https://")
+
+        base_url = validate_base_url(base_url)
 
         api_token = os.getenv("GITLAB_TOKEN", "").strip()
         git_token = os.getenv("GITLAB_GIT_TOKEN", "").strip() or api_token
@@ -122,6 +127,7 @@ class AgentSettings:
         return cls(
             config_file=env_file.resolve() if env_file.exists() else env_file.expanduser(),
             gitlab_base_url=base_url,
+            api_ca_bundle=ca_bundle_path(os.getenv("GITLAB_CA_BUNDLE")),
             api_token=api_token,
             api_verify_ssl=env_bool("GITLAB_VERIFY_SSL", True),
             api_trust_env=env_bool("GITLAB_TRUST_ENV", False),
