@@ -1,25 +1,32 @@
 # Documentation index
 
+**English** · [简体中文](README_CN.md)
+
 These guides describe the source revision containing them. A merged feature is not necessarily included in the last release tag. See [the main README](../README.md) and [Unreleased changes](../CHANGELOG.md).
 
 ## Current entry points
 
-| Topic | Document |
-| --- | --- |
-| Product and supported capabilities | [ReasonFirst](../README.md) |
-| Which interface to use and what each check proves | [One reasoning interface, one implementation workflow](WORKFLOW.md) |
-| Source setup and first controlled task | [Current quickstart](ACTUAL_CODER_QUICKSTART.md) |
-| 当前中文安装与使用 | [中文快速上手](QUICKSTART_CN.md) |
-| Connect/restart normal ChatGPT's GitLab reads | [English operator guide](SETUP_TUTORIAL.md) / [中文团队接入与重启](OPENAI_TUNNEL_TEAM_SETUP_CN.md) |
-| Manual approved-task handoff and result evidence | [Writing template, not a runtime API](TASK_HANDOFF_TEMPLATE.md) |
-| Architectural intent | [Design philosophy](DESIGN_PHILOSOPHY.md) |
-| HTTP-to-HTTPS migration | [English](HTTPS_MIGRATION.md) / [中文](HTTPS_MIGRATION_CN.md) |
-| API/MCP private-CA trust, redirects, and native Git boundaries | [English](HTTPS_API_TLS.md) / [中文](HTTPS_API_TLS_CN.md) |
-| PR checkout, tests, and normal-install updates | [Local PR review](LOCAL_PR_REVIEW.md) |
-| Diagnosis without weakening controls | [Troubleshooting by layer](TROUBLESHOOTING.md) |
-| Contribution process | [Contributing](../CONTRIBUTING.md) |
-| Security reporting and current limitations | [Security policy](../SECURITY.md) |
-| Before announcing a public release | [Maintainer checklist](PUBLIC_RELEASE_CHECKLIST.md) |
+| Topic | English | 简体中文 |
+| --- | --- | --- |
+| Product and supported capabilities | [ReasonFirst](../README.md) | [项目说明](../README_CN.md) |
+| Which interface to use and what each check proves | [Workflow](WORKFLOW.md) | [工作流程](WORKFLOW_CN.md) |
+| Source setup and first controlled task | [Current quickstart](ACTUAL_CODER_QUICKSTART.md) | [快速上手](QUICKSTART_CN.md) |
+| Connect/restart normal ChatGPT's GitLab reads | [Operator guide](SETUP_TUTORIAL.md) | [团队接入与重启](OPENAI_TUNNEL_TEAM_SETUP_CN.md) |
+| Manual approved-task handoff and result evidence | [Writing template, not a runtime API](TASK_HANDOFF_TEMPLATE.md) | [人工交接与证据模板](TASK_HANDOFF_TEMPLATE_CN.md) |
+| Architectural intent | [Design philosophy](DESIGN_PHILOSOPHY.md) | [设计理念](DESIGN_PHILOSOPHY_CN.md) |
+| HTTP-to-HTTPS migration | [Migration](HTTPS_MIGRATION.md) | [迁移指南](HTTPS_MIGRATION_CN.md) |
+| API/MCP private-CA trust, redirects, and native Git boundaries | [Runtime TLS](HTTPS_API_TLS.md) | [运行时 TLS](HTTPS_API_TLS_CN.md) |
+| PR checkout, tests, and normal-install updates | [Local PR review](LOCAL_PR_REVIEW.md) | [本地 PR 审阅与更新](LOCAL_PR_REVIEW_CN.md) |
+| Diagnosis without weakening controls | [Troubleshooting by layer](TROUBLESHOOTING.md) | [分层故障排查](TROUBLESHOOTING_CN.md) |
+| Contribution process | [Contributing](../CONTRIBUTING.md) | [贡献指南](../CONTRIBUTING_CN.md) |
+| Security reporting and current limitations | [Security policy](../SECURITY.md) | [安全策略与边界](../SECURITY_CN.md) |
+| Before announcing a public release | [Maintainer checklist](PUBLIC_RELEASE_CHECKLIST.md) | [公开发布清单](PUBLIC_RELEASE_CHECKLIST_CN.md) |
+
+## Translation scope and maintenance
+
+The current English-only guides now have Chinese counterparts in the table above. Existing Chinese quickstart, tunnel, migration, and runtime TLS guides remain their corresponding entry points rather than being duplicated. Each newly translated page links to its English source and records the source revision in a Markdown comment. When behavior changes, update both language versions; preserve executable commands, configuration keys, evidence limits, and the distinction between planned and implemented capabilities.
+
+Historical version notes and CHANGELOG are retained as original records, and LICENSE remains unchanged. Translation does not introduce a release, change permissions, disable the optional Assistant helper, or implement TaskSpec/EvidencePack.
 
 ## One reasoning interface, not another required chatbot
 

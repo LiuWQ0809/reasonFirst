@@ -1,5 +1,7 @@
 # ReasonFirst
 
+**English** · [简体中文](README_CN.md) · [Bilingual documentation index](docs/README.md)
+
 > **Reasoning-first coding orchestration.**
 > Use your strongest reasoning model for reasoning. Let coding agents do the coding.
 
