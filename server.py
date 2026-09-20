@@ -12,6 +12,10 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 from gitlab_agent.log_evidence import aread_trace_tail
+from gitlab_agent.project_access import (
+    ProjectAccessError, assert_project_allowed, check_project_access as probe_project_access,
+    http_failure, transport_failure, visible_access_errors,
+)
 from gitlab_agent.tls import api_client_options, ca_bundle_path, validate_base_url
 
 
@@ -151,10 +155,7 @@ class GitLabClient:
 
     def _headers(self) -> dict[str, str]:
         if not self.token:
-            raise RuntimeError(
-                "GITLAB_TOKEN is not configured. Put it in .env or export it in the shell. "
-                "Recommended PAT scopes: read_api and read_repository."
-            )
+            raise ProjectAccessError("credential_missing", stage="credential")
         return {
             "PRIVATE-TOKEN": self.token,
             "Accept": "application/json",
@@ -173,14 +174,7 @@ class GitLabClient:
         )
 
     def assert_project_allowed(self, project: str | int) -> None:
-        if not self.allowed:
-            return
-        key = _project_key(project)
-        if key not in self.allowed:
-            raise RuntimeError(
-                f"Project {key!r} is not in GITLAB_ALLOWED_PROJECTS. "
-                "Use an exact numeric project ID or path_with_namespace from the allowlist."
-            )
+        assert_project_allowed(project, self.allowed)
 
     async def _request(
         self,
@@ -194,25 +188,11 @@ class GitLabClient:
         try:
             async with self._client() as client:
                 response = await client.request(method, url, params=params)
-        except httpx.TimeoutException as exc:
-            raise RuntimeError(
-                f"Timed out contacting GitLab at {url}. "
-                "Check network/VPN access and GITLAB_TIMEOUT_SECONDS."
-            ) from exc
-        except httpx.ConnectError as exc:
-            raise RuntimeError(
-                f"Could not connect to GitLab at {url}. "
-                "Check that this host can reach the internal GitLab directly. "
-                f"GITLAB_TRUST_ENV={self.trust_env}."
-            ) from exc
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"HTTP error contacting GitLab at {url}: {exc}") from exc
+            raise transport_failure(exc) from None
 
-        if response.is_error:
-            detail = response.text[:2000]
-            raise RuntimeError(
-                f"GitLab API returned HTTP {response.status_code} for {path}: {detail}"
-            )
+        if response.status_code >= 300:
+            raise http_failure(response.status_code)
 
         return response
 
@@ -228,11 +208,8 @@ class GitLabClient:
             return None
         try:
             return response.json()
-        except ValueError as exc:
-            preview = response.text[:1000]
-            raise RuntimeError(
-                f"GitLab returned non-JSON content for {path}: {preview}"
-            ) from exc
+        except ValueError:
+            raise ProjectAccessError("invalid_response", stage="resource") from None
 
     async def request_text(
         self,
@@ -249,7 +226,7 @@ class GitLabClient:
         data = await self.request_json("GET", f"/projects/{_project_id(project)}")
         branch = (data or {}).get("default_branch")
         if not branch:
-            raise RuntimeError(f"Could not determine default branch for project {project!r}")
+            raise ProjectAccessError("default_branch_unavailable", stage="ref")
         return str(branch)
 
 
@@ -263,12 +240,47 @@ mcp = MCPServer(
     instructions=(
         "Read-only GitLab bridge for ReasonFirst, providing access to a self-managed GitLab instance. "
         "Use these tools to inspect repositories, files, code search, merge requests, "
-        "pipelines, jobs, and logs. This server intentionally exposes no write actions."
+        "pipelines, jobs, and logs. This server intentionally exposes no write actions. "
+        "For each newly proposed project, first call check_project_access with its exact "
+        "project/ref and required files. A proposed project or local folder is not a verified "
+        "GitLab repository. If ok=false, STOP bulk reads and task handoffs, show error.code "
+        "and next_steps, and wait for the user. Never infer nonexistence from 404 or an empty "
+        "project listing. Only the user/operator may create projects or grant local/GitLab "
+        "access; do not clear allowlists, switch to an allowed production repo, or request "
+        "secrets. GITLAB_ALLOWED_PROJECTS belongs to the local MCP configuration, not the "
+        "OpenAI tunnel profile. After approval, restart MCP and retry the same preflight."
     ),
 )
 
 
-@mcp.tool(title="GitLab current user", annotations=READ_ONLY)
+def read_tool(*, title: str, annotations=READ_ONLY):
+    """Expose safe access diagnostics even when MCP hides exception messages."""
+    def register(fn):
+        mcp.tool(title=title, annotations=annotations)(visible_access_errors(fn))
+        return fn
+    return register
+
+
+@read_tool(title="Check GitLab project access and readiness", annotations=READ_ONLY)
+async def check_project_access(
+    project: str,
+    ref: str = "",
+    required_files: list[str] | None = None,
+) -> dict[str, Any]:
+    """Run before using a new project. Check local grant, remote project, ref and files.
+
+    No writes, automatic grants, credential-file inspection or file-content reads.
+    If ok=false, show the actionable diagnostic and wait for the user; do not
+    retry all files or claim the project is absent from an ambiguous 404.
+    """
+    return await probe_project_access(
+        project, allowed=gitlab.allowed, token_present=bool(gitlab.token),
+        client_factory=gitlab._client, base_url=gitlab.base_url,
+        ref=ref, required_files=required_files,
+    )
+
+
+@read_tool(title="GitLab current user", annotations=READ_ONLY)
 async def gitlab_whoami() -> dict[str, Any]:
     """Verify MCP-to-GitLab connectivity and return the authenticated GitLab user."""
     user = await gitlab.request_json("GET", "/user")
@@ -280,10 +292,12 @@ async def gitlab_whoami() -> dict[str, Any]:
         "name": user.get("name"),
         "state": user.get("state"),
         "web_url": user.get("web_url"),
+        "project_access_checked": False,
+        "next_step": "Use check_project_access for the intended project before repository reads.",
     }
 
 
-@mcp.tool(title="List accessible GitLab projects", annotations=READ_ONLY)
+@read_tool(title="List accessible GitLab projects", annotations=READ_ONLY)
 async def list_projects(
     search: str = "",
     page: int = 1,
@@ -304,6 +318,7 @@ async def list_projects(
 
     items = await gitlab.request_json("GET", "/projects", params=params)
     items = items or []
+    upstream_page_full = len(items) >= per_page
 
     if gitlab.allowed:
         items = [
@@ -316,6 +331,14 @@ async def list_projects(
     return {
         "page": max(1, page),
         "per_page": per_page,
+        "listing_scope": "token_membership_filtered_by_local_allowlist",
+        "next_page": max(1, page) + 1 if upstream_page_full else None,
+        "next_page_is_candidate": upstream_page_full,
+        "notice": (
+            "An empty filtered page does not prove nonexistence or no further results. "
+            "Use check_project_access for the exact intended project. Next-page hints "
+            "refer to the upstream page, before local filtering."
+        ),
         "items": [
             {
                 "id": p.get("id"),
@@ -330,7 +353,7 @@ async def list_projects(
     }
 
 
-@mcp.tool(title="Browse repository tree", annotations=READ_ONLY)
+@read_tool(title="Browse repository tree", annotations=READ_ONLY)
 async def get_repository_tree(
     project: str,
     ref: str = "",
@@ -368,7 +391,7 @@ async def get_repository_tree(
     }
 
 
-@mcp.tool(title="Read repository file", annotations=READ_ONLY)
+@read_tool(title="Read repository file", annotations=READ_ONLY)
 async def get_file(
     project: str,
     file_path: str,
@@ -396,6 +419,7 @@ async def get_file(
             "size": len(raw),
             "blob_id": data.get("blob_id"),
             "last_commit_id": data.get("last_commit_id"),
+            "commit_id": data.get("commit_id"),
             "message": "Binary/non-UTF-8 file; content omitted.",
         }
 
@@ -408,13 +432,14 @@ async def get_file(
         "size": len(raw),
         "blob_id": data.get("blob_id"),
         "last_commit_id": data.get("last_commit_id"),
+        "commit_id": data.get("commit_id"),
         "truncated": truncated,
         "original_text_bytes": original_bytes,
         "content": clipped,
     }
 
 
-@mcp.tool(title="Search code in a GitLab project", annotations=READ_ONLY)
+@read_tool(title="Search code in a GitLab project", annotations=READ_ONLY)
 async def search_code(
     project: str,
     query: str,
@@ -441,6 +466,8 @@ async def search_code(
             f"/projects/{_project_id(project)}/search",
             params=params,
         )
+    except ProjectAccessError:
+        raise
     except RuntimeError as exc:
         raise RuntimeError(
             "GitLab code search failed. This instance/tier may not provide blob search "
@@ -458,7 +485,7 @@ async def search_code(
     }
 
 
-@mcp.tool(title="Read merge request", annotations=READ_ONLY)
+@read_tool(title="Read merge request", annotations=READ_ONLY)
 async def get_merge_request(project: str, iid: int) -> dict[str, Any]:
     """Read metadata and status for one merge request by project-local IID."""
     gitlab.assert_project_allowed(project)
@@ -477,7 +504,7 @@ async def get_merge_request(project: str, iid: int) -> dict[str, Any]:
     return {k: v for k, v in mr.items() if k in keep}
 
 
-@mcp.tool(title="Read merge request diffs", annotations=READ_ONLY)
+@read_tool(title="Read merge request diffs", annotations=READ_ONLY)
 async def get_merge_request_diff(
     project: str,
     iid: int,
@@ -541,7 +568,7 @@ async def get_merge_request_diff(
     }
 
 
-@mcp.tool(title="List pipelines", annotations=READ_ONLY)
+@read_tool(title="List pipelines", annotations=READ_ONLY)
 async def get_pipelines(
     project: str,
     ref: str = "",
@@ -577,7 +604,7 @@ async def get_pipelines(
     }
 
 
-@mcp.tool(title="List pipeline jobs", annotations=READ_ONLY)
+@read_tool(title="List pipeline jobs", annotations=READ_ONLY)
 async def get_pipeline_jobs(
     project: str,
     pipeline_id: int,
@@ -607,7 +634,7 @@ async def get_pipeline_jobs(
     }
 
 
-@mcp.tool(title="Read CI job log", annotations=READ_ONLY)
+@read_tool(title="Read CI job log", annotations=READ_ONLY)
 async def get_job_log(
     project: str,
     job_id: int,

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .tls import ca_bundle_path, validate_base_url
+from .project_access import ProjectAccessError, assert_project_allowed
 
 
 DEFAULT_ALLOWED_EXECUTABLES = {
@@ -153,15 +154,8 @@ class AgentSettings:
         )
 
     def assert_project_allowed_for_workspace(self, project: str) -> None:
-        if self.allowed_projects:
-            if project not in self.allowed_projects:
-                raise RuntimeError(
-                    f"Project {project!r} is not in GITLAB_ALLOWED_PROJECTS"
-                )
-            return
-        if self.require_write_allowlist:
-            raise RuntimeError(
-                "GITLAB_ALLOWED_PROJECTS is empty. For local/write workflows, "
-                "configure an explicit project allowlist or set "
-                "GITLAB_REQUIRE_WRITE_ALLOWLIST=false intentionally."
-            )
+        assert_project_allowed(project, set())
+        if self.allowed_projects and project not in self.allowed_projects:
+            raise ProjectAccessError("project_not_allowlisted", stage="local_policy")
+        if not self.allowed_projects and self.require_write_allowlist:
+            raise ProjectAccessError("write_allowlist_required", stage="local_policy")

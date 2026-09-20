@@ -2,7 +2,7 @@
 
 [English](README.md) · **简体中文**
 
-<!-- Translation source: docs/README.md @ a3e33c72c55efef6a0dc3808fb9853c62ad15f9d; navigation and translation-maintenance section updated together with the English index in this change. -->
+<!-- Translation source: docs/README.md @ a3e33c72c55efef6a0dc3808fb9853c62ad15f9d; navigation, access-gate and translation-maintenance sections maintained together with the English index. -->
 
 这些指南描述的是包含它们的源码修订。某项功能已经合并，不代表最近的发布 tag 一定包含它。参见[项目说明](../README_CN.md)和 [Unreleased 更新记录](../CHANGELOG.md)。
 
@@ -11,6 +11,8 @@
 | 主题 | 简体中文 | English |
 | --- | --- | --- |
 | 产品与支持的能力 | [项目说明](../README_CN.md) | [ReasonFirst](../README.md) |
+| 使用新提出的 GitLab 项目之前 | [项目预检与用户授权](PROJECT_ACCESS_CN.md) | [Access preflight and grants](PROJECT_ACCESS.md) |
+| 演练 ChatGPT、Codex 与同一 MR 的三轮审查 | [实战演练](PRACTICE_LAB_CN.md) | [Practice lab](PRACTICE_LAB.md) |
 | 各界面的用途，以及每项检查能证明什么 | [工作流程](WORKFLOW_CN.md) | [Workflow](WORKFLOW.md) |
 | 源码安装与第一个受控任务 | [快速上手](QUICKSTART_CN.md) | [Quickstart](ACTUAL_CODER_QUICKSTART.md) |
 | 普通 ChatGPT 的 GitLab 读取接入与重启 | [团队接入与重启](OPENAI_TUNNEL_TEAM_SETUP_CN.md) | [Operator guide](SETUP_TUTORIAL.md) |
@@ -23,6 +25,10 @@
 | 贡献流程 | [贡献指南](../CONTRIBUTING_CN.md) | [Contributing](../CONTRIBUTING.md) |
 | 安全报告与当前限制 | [安全策略](../SECURITY_CN.md) | [Security](../SECURITY.md) |
 | 公开发布之前 | [维护者检查清单](PUBLIC_RELEASE_CHECKLIST_CN.md) | [Release checklist](PUBLIC_RELEASE_CHECKLIST.md) |
+
+## 新项目访问门槛
+
+项目名称或本地目录不能证明远端仓库已存在或获准。首次引入项目时，普通 ChatGPT 流程应在批量读取和任务交接前调用 `check_project_access`。`ok: false` 时展示诊断，等待用户/管理员处理。404 或过滤后的空列表不能区分不存在和不可访问。项目级授权在本地 MCP 配置的 `GITLAB_ALLOWED_PROJECTS`，不在 OpenAI Tunnel 设置中；仅明确批准后授权并重启现有 MCP。只读辅助检查不会授权或创建项目。参见上方中英文访问指南；按照较早的首任务示例操作前，也应先完成此门槛。
 
 ## 翻译范围与维护
 
