@@ -189,7 +189,11 @@ class TLSPolicyTests(unittest.TestCase):
     def test_config_loads_ca_without_proxy_inheritance(self):
         env_file = self.root / ".env"
         env_file.write_text("GITLAB_BASE_URL=" + self.base + "\nGITLAB_CA_BUNDLE=" + str(self.authority.ca_path) + "\n")
-        with patch.dict(os.environ, {"GITLAB_AGENT_ENV_FILE": str(env_file)}, clear=True):
+        # Config precedence tests isolate all environment variables. Supply a
+        # workspace path explicitly instead of relying on an OS home lookup
+        # (Windows needs USERPROFILE/HOMEDRIVE, intentionally cleared here).
+        with patch.dict(os.environ, {"GITLAB_AGENT_ENV_FILE": str(env_file),
+                                     "GITLAB_WORKSPACE_ROOT": str(self.root / "workspaces")}, clear=True):
             settings = AgentSettings.load()
         self.assertEqual(settings.api_ca_bundle, self.authority.ca_path)
         self.assertFalse(settings.api_trust_env)
@@ -198,6 +202,7 @@ class TLSPolicyTests(unittest.TestCase):
         env_file = self.root / ".env"
         env_file.write_text("GITLAB_BASE_URL=" + self.base + "\nGITLAB_CA_BUNDLE=/unused.pem\n")
         with patch.dict(os.environ, {"GITLAB_AGENT_ENV_FILE": str(env_file),
+                                     "GITLAB_WORKSPACE_ROOT": str(self.root / "workspaces"),
                                      "GITLAB_CA_BUNDLE": str(self.authority.ca_path)}, clear=True):
             settings = AgentSettings.load()
         self.assertEqual(settings.api_ca_bundle, self.authority.ca_path)
