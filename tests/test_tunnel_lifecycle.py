@@ -4,15 +4,17 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 import os
+import queue
 from pathlib import Path
 import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import yaml
 from gitlab_agent import tunnel_lifecycle as tunnel
@@ -52,6 +54,30 @@ if "run_exit" in mode:
     sys.exit(mode["run_exit"])
 if mode.get("ignore_term"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if mode.get("stubborn_descendant"):
+    def leader_term(signum, frame):
+        (root / "leader-terminated").touch()
+        os._exit(0)
+    signal.signal(signal.SIGTERM, leader_term)
+    ready_r, ready_w = os.pipe()
+    if os.fork() == 0:
+        os.close(ready_r)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+            conn.settimeout(30)
+            conn.connect(str(root / "descendant.sock"))
+            conn.sendall(b"ready")
+            os.write(ready_w, b"1")
+            os.close(ready_w)
+            # A live socket (not kill(pid, 0)) distinguishes a surviving process
+            # from an orphan zombie. Closing it also cleans up a failing test.
+            try: conn.recv(1)
+            except OSError: pass
+        os._exit(0)
+    os.close(ready_w)
+    if os.read(ready_r, 1) != b"1":
+        sys.exit(9)
+    os.close(ready_r)
 started = time.monotonic()
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -423,9 +449,27 @@ class TunnelFixture(unittest.TestCase):
     def test_slow_probe_cannot_block_startup_deadline_or_control(self):
         self.mode(slow_http=True)
         began = time.monotonic()
-        completed, result = self.call("start", "--startup-timeout", "1")
-        self.assertEqual(result["state"], "startup_timeout")
-        self.assertLess(time.monotonic() - began, 6)
+        process = self.begin("--startup-timeout", "1")
+        messages = queue.Queue()
+        def collect():
+            for line in process.stdout:
+                messages.put((time.monotonic(), json.loads(line)))
+        reader = threading.Thread(target=collect, daemon=True)
+        reader.start()
+        while True:
+            remaining = 6 - (time.monotonic() - began)
+            self.assertGreater(remaining, 0, "Startup notification missed its deadline")
+            observed, result = messages.get(timeout=remaining)
+            if result.get("state") == "startup_timeout":
+                break
+        # Preserve the existing notification deadline, separately from the
+        # full five-second process-group cleanup that follows that notification.
+        self.assertLess(observed - began, 6)
+        self.assertEqual(process.wait(timeout=10), 1)
+        reader.join(timeout=1)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(tunnel.lock_held(self.settings))
+        self.assertFalse(tunnel.port_busy(tunnel.read_profile(self.settings)))
 
     def test_metadata_error_and_wrong_identity_do_not_report_ready(self):
         for mode in ({"metadata_error": True}, {"wrong_identity": True}, {"malformed_base": True}):
@@ -498,6 +542,100 @@ class TunnelFixture(unittest.TestCase):
         self.assertEqual(result["state"], "stopped")
         self.assertEqual(process.wait(timeout=10), 0)
         self.assertFalse(tunnel.port_busy(tunnel.read_profile(self.settings)))
+
+    def check_descendant_shutdown(self, action):
+        self.mode(stubborn_descendant=True)
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+        self.children.append(unrelated)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(self.source / "descendant.sock"))
+            listener.listen()
+            listener.settimeout(10)
+            process = self.begin()
+            conn, _ = listener.accept()
+            with conn:
+                conn.settimeout(3)
+                ready = bytearray()
+                while len(ready) < 5:
+                    chunk = conn.recv(5 - len(ready))
+                    self.assertTrue(chunk)
+                    ready.extend(chunk)
+                self.assertEqual(ready, b"ready")
+                first = self.await_ready(process)
+                if action == "stop":
+                    completed, result = self.call("stop")
+                    self.assertEqual(completed.returncode, 0)
+                    self.assertEqual(result["state"], "stopped")
+                elif action == "interrupt":
+                    process.send_signal(signal.SIGINT)
+                else:
+                    self.mode()  # the replacement has no synthetic descendant
+                    replacement = subprocess.Popen(self.command("restart"), env=self.env,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    self.children.append(replacement)
+                    process.wait(timeout=15)
+                    second = self.await_ready(replacement)
+                    self.assertNotEqual(first["instance_id"], second["instance_id"])
+                self.assertEqual(process.wait(timeout=10), 0)
+                self.assertTrue((self.source / "leader-terminated").exists())
+                self.assertEqual(conn.recv(1), b"", "A TERM-resistant descendant survived leader exit")
+                self.assertIsNone(unrelated.poll())
+                if action == "restart":
+                    self.call("stop")
+                    self.assertEqual(replacement.wait(timeout=10), 0)
+                self.assertFalse(tunnel.lock_held(self.settings))
+                self.assertFalse(tunnel.port_busy(tunnel.read_profile(self.settings)))
+
+    def test_stop_cleans_descendant_after_leader_exits(self):
+        self.check_descendant_shutdown("stop")
+
+    def test_interrupt_cleans_descendant_after_leader_exits(self):
+        self.check_descendant_shutdown("interrupt")
+
+    def test_restart_cleans_previous_descendant_after_leader_exits(self):
+        self.check_descendant_shutdown("restart")
+
+    def test_group_signals_finish_before_leader_is_reaped(self):
+        child = Mock(pid=12345, returncode=None)
+        child.poll.side_effect = AssertionError("poll would reap the group leader")
+        events = []
+        def send(pgid, sig):
+            events.append((pgid, sig))
+        def reap(**kwargs):
+            self.assertEqual(events, [(child.pid, signal.SIGTERM), (child.pid, signal.SIGKILL)])
+            return 0
+        child.wait.side_effect = reap
+        with patch.object(tunnel.os, "killpg", side_effect=send), \
+             patch.object(tunnel.time, "monotonic", side_effect=[0, 5]):
+            tunnel.terminate_owned(child)
+        child.poll.assert_not_called()
+        child.wait.assert_called_once_with(timeout=5)
+
+    def test_reaped_leader_is_never_signalled(self):
+        child = Mock(pid=12345, returncode=0)
+        with patch.object(tunnel.os, "killpg") as send:
+            tunnel.terminate_owned(child)
+        send.assert_not_called()
+        child.poll.assert_not_called()
+        child.wait.assert_not_called()
+
+    def test_absent_owned_group_is_reaped_without_retrying_signal(self):
+        child = Mock(pid=12345, returncode=None)
+        with patch.object(tunnel.os, "killpg", side_effect=ProcessLookupError) as send:
+            tunnel.terminate_owned(child)
+        self.assertEqual(send.call_args_list, [call(child.pid, signal.SIGTERM)])
+        child.wait.assert_called_once_with(timeout=5)
+        child.poll.assert_not_called()
+
+    def test_spawn_refuses_automatic_or_external_child_reaping(self):
+        for disposition in (signal.SIG_IGN, lambda signum, frame: None):
+            with self.subTest(disposition=disposition), \
+                 patch.object(tunnel.signal, "getsignal", return_value=disposition), \
+                 patch.object(tunnel.subprocess, "Popen") as launch:
+                with self.assertRaises(tunnel.LifecycleError) as error:
+                    tunnel.spawn(["unused"], self.settings, self.env)
+                self.assertEqual(error.exception.code, "child_reaping_unsupported")
+                launch.assert_not_called()
 
     def test_stop_already_stopped_is_idempotent(self):
         _, result = self.call("stop")

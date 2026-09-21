@@ -442,25 +442,34 @@ def stop(settings: Settings, *, expected: str | None = None) -> dict:
 
 
 def terminate_owned(child: subprocess.Popen) -> None:
-    """Only signal a child we spawned, before reaping it. Never use a saved PID."""
-    if child.poll() is not None:
-        return
+    """Finish signalling the owned group BEFORE reaping its leader.
+
+    This owner is the only waiter. An unreaped leader pins its PID/PGID even
+    after it exits; poll()/wait() during the grace period would remove that
+    protection and also mistake leader exit for descendant shutdown.
+    """
+    if child.returncode is not None:
+        return  # already reaped: never signal a potentially reused PID/PGID
     try:
         os.killpg(child.pid, signal.SIGTERM)
     except ProcessLookupError:
-        pass
+        child.wait(timeout=5)
+        return
+    # Keep the full existing five-second TERM grace for every member, including
+    # descendants that outlive the leader. Do not poll/wait/reap during it.
+    deadline = time.monotonic() + 5
+    while (remaining := deadline - time.monotonic()) > 0:
+        time.sleep(min(0.1, remaining))
     try:
-        child.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        # Still our unreaped child/process group, not a PID loaded from state.
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        child.wait(timeout=5)
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait(timeout=5)
 
 
 def spawn(argv: list[str], settings: Settings, env: dict[str, str]) -> subprocess.Popen:
+    if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+        fail("child_reaping_unsupported", "Owned group shutdown requires the default SIGCHLD disposition and this helper as the sole child waiter. No process was started.")
     return subprocess.Popen(argv, cwd=settings.source_dir, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             start_new_session=True, close_fds=True)
