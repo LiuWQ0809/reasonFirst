@@ -1,70 +1,44 @@
-# 团队接入：ChatGPT 负责推理，Tunnel 负责连接
+# 手工与高级 GitLab MCP 接入操作
 
-[README](../README.md) · [English operator guide](SETUP_TUTORIAL.md) · [日常流程](WORKFLOW.md) · [ActualCoder 中文上手](QUICKSTART_CN.md)
+[English](SETUP_TUTORIAL.md) · **[首次完整接入](GETTING_STARTED_CN.md)** · [受管日常生命周期](TUNNEL_LIFECYCLE_CN.md)
 
-**不需要 localhost Assistant。** 本文的推理界面是正常的 ChatGPT 对话；本机运行 `tunnel-client` 和 ReasonFirst 的只读 MCP 服务。真正实现任务时，再由用户在终端通过 ActualCoder 启动 Codex/Copilot CLI。不要把本地仪表盘的 Assistant 页当成 ChatGPT，也不要为它的审批错误放宽全局权限。
+**新用户应顺序完成 [GETTING_STARTED_CN.md](GETTING_STARTED_CN.md)，不要从备用方案拼接首次部署。** 完整指南包含前置条件、安装、Platform/workspace 权限、runtime key、Keychain、profile、新生命周期助手及第一条普通 ChatGPT 请求。本文保留手工/高级和 Windows 替代操作。
 
-## 1. 必需与可选
+## 首次接入
 
-```text
-读取与审阅：
-正常 ChatGPT 对话 <-> OpenAI Tunnel <-> 本机 tunnel-client
-                  <-> ReasonFirst server.py <-> GitLab HTTPS API
+使用[完整指南](GETTING_STARTED_CN.md)。复用既有 GitLab 配置、Tunnel ID 和本地 profile；不为排查重启而运行 `init --force`、覆盖 `.env` 或创建替代隧道。ReasonFirst 与上游 `tunnel-client` 分别安装。隧道客户端是此连接的必需组件；编程后端只在后续实现时需要。
 
-实现：
-批准的任务 -> 用户手工交接 -> ActualCoder + 编码 CLI
-           -> 验证 / 人工确认 finish -> MR / CI -> 返回审阅
-```
+OpenAI Platform 隧道管理/使用权限、ChatGPT workspace 自定义应用权限、GitLab/本地 MCP 项目授权分属不同层。`CONTROL_PLANE_API_KEY` 是 OpenAI runtime key，`tunnel_...` 是 ID，`GITLAB_TOKEN` 是 GitLab API 凭证。本地私有 `GITLAB_ALLOWED_PROJECTS` 管理项目授权，不是 OpenAI Tunnel 设置。
 
-Tunnel 是传输，不需要第二个本地模型解释每次请求。MCP 目前不能提交本地编码任务，也不能读取尚未发布的本地 diff。TaskSpec/EvidencePack 是后续计划；[手工交接模板](TASK_HANDOFF_TEMPLATE.md)不是已经实现的配置格式。
+## 重启既有 profile
 
-| 组件 | 本流程是否需要 |
-| --- | --- |
-| 正常 ChatGPT 对话中的 GitLab 连接 | 需要，用于推理和实时读取 |
-| tunnel-client 与 server.py | 这条隧道接入路径需要；CLI 单独使用不需要隧道 |
-| ActualCoder 与所选编码 CLI | 实现任务时需要；单纯 MCP 读取不需要 |
-| localhost Overview / Logs | 可选运维诊断 |
-| localhost Assistant、Codex tunnel plugin、MCP Inspector | 不属于必需安装或验收项 |
+已配置 macOS/Linux 助手时，使用[生命周期命令](TUNNEL_LIFECYCLE_CN.md)，保持前台 Terminal。服务管理器启动的 runtime 应通过原 supervisor 和秘密加载器操作。**同一隧道不要混用手工、助手管理和服务管理。**
 
-关闭仪表盘网页不等于关闭隧道，也不保证停止上游软件附带的后台 Assistant helper。本说明没有卸载 Codex、修改上游程序或关闭 helper。Codex CLI 仍可作为编码 worker。
-
-## 2. 四种值不要混淆
-
-| 值 | 用途 | 正确位置 |
-| --- | --- | --- |
-| `GITLAB_TOKEN` | GitLab 只读 API | 私有用户配置或明确加载的环境变量 |
-| `GITLAB_GIT_TOKEN` | ActualCoder 的 Git 写入凭证（需要写入时） | 私有用户配置；不要交给对话或参考笔记 |
-| Tunnel ID | 标识已有隧道，不是 bearer secret，但属于部署信息 | profile 的 `control_plane.tunnel_id` |
-| OpenAI runtime API key | 允许 tunnel-client 使用隧道 | 安全存储，通过 `env:` 或受保护 `file:` 引用加载 |
-
-`control_plane.base_url` 是 OpenAI 隧道服务，不是 GitLab 地址。`api_key: "env:CONTROL_PLANE_API_KEY"` 是正确的环境引用；缺少变量不等于 key 已失效。不要把 `tunnel_...` ID 或 GitLab Token 填进 runtime key。
-
-使用隧道需要适用 Platform 组织的 Tunnels Read + Use 权限；管理隧道和 Admin Key 是另外的权限。ChatGPT 接入资格、组织和 workspace 关联按[当前官方说明](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)与[Developer Mode 帮助](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)核对，不把某个订阅名称写成永久保证。key 的前缀不能证明权限或有效性。
-
-GitLab 用户配置是明文加文件权限保护，不是加密 vault。当前 ReasonFirst 不会自动把 `GITLAB_TOKEN=keychain:...` 或 `file:...` 解析为秘密。macOS 可用 Keychain、Linux 可用受保护 secret file、Windows 可用 DPAPI/企业 secret manager，但加载方式应由用户或已批准的 launcher 明确实现；不要猜测别人机器上的 Keychain 条目。
-
-## 3. 已有安装：只重启，不重新初始化
-
-先停止该 profile 原有的前台进程（在对应终端按 Control+C）。若使用服务管理器，应通过原服务重启并更新它的环境，不要同时启动第二个前台实例，也不要杀掉所有 Python/Codex 进程。
+仅在明确采用手工/高级 profile 时使用下文。在已知旧实例的原 Terminal 按 Control+C，不使用 `pkill`、`killall` 或猜测保存的 PID。
 
 ```bash
 tunnel-client profiles list
 ```
 
-用返回的 profile 名称和路径。在本地编辑器私下检查 `mcp.commands` 的 `main` 命令，确认它指向长期使用的源码目录，而不是已弃用目录或临时 PR worktree。配置片段示例：
+用本地编辑器检查返回的 profile，不把文件内容发送到对话。main stdio 命令应指向长期已审阅源码目录。下文只是片段，不是整份替代配置：
 
 ```yaml
 mcp:
   commands:
     - channel: main
-      command: "bash /absolute/path/to/reasonFirst/run_mcp.sh"
+      command: 'bash "/absolute/path/to/reasonFirst/run_mcp.sh"'
 ```
 
-路径只是示例，必须替换。保留原 Tunnel ID 与凭证引用；不要重跑 `init` 或覆盖整份 profile。改变终端当前目录不会改变 profile 中的绝对路径。路径包含空格时，按已安装 tunnel-client 的命令引用规则处理并验证。
+切换 Terminal 当前目录不会更新绝对路径。`run_mcp.sh` 只启动本地 stdio MCP，不会自行连接隧道。保留 ID 和凭证引用；高级 profile 不被保守的生命周期助手支持，不代表上游配置一定无效。
 
-### macOS / Linux：环境引用 profile
+<a id="credential-alternatives"></a>
+## 凭证替代方式
 
-在正确的源码目录打开 Terminal。下面显式使用 Bash，因此可从 macOS zsh 粘贴；不要求 zsh 支持交互注释或 Bash 风格的 `read`。替换示例 profile 名称，确认用户配置路径。只适用于 `env:CONTROL_PLANE_API_KEY`；已有 `file:` 配置继续用原安全引用，不必为了复制此段而改成环境引用。
+首次 Mac 路径使用准确、已有的 Keychain 条目。Keychain 可选，但**必须有明确 runtime-key 来源**。助手只保存引用，加载失败时不会自动切换凭证来源。
+
+**助手配合 env/file：**运行 `actual-coder-tunnel configure` 时不带两个 Keychain 选项，明确选择 source/profile/私有 GitLab 配置。`env:CONTROL_PLANE_API_KEY` 要求每次启动的 shell 都有变量，通过批准的秘密加载器或隐藏本地提示输入。`file:/absolute/path` 使用用户所有、常规、非符号链接、0600 权限的私有文件，由上游读取。已有不同助手设置时，先审阅再明确 `configure --replace`，不能在 owner 运行时替换。
+
+**手工 env 引用启动：**先在真实长期源码目录打开 Terminal。下文显式调用 Bash，只在当前 shell 没有 runtime key 时提示输入。替换示例 profile 名；输入不会持久保存，也不会作为字面值写入命令历史：
 
 ```bash
 bash <<'BASH'
@@ -75,7 +49,7 @@ PROFILE="selfhosted-gitlab"
 export GITLAB_AGENT_ENV_FILE="$HOME/.config/gitlab-agent/.env"
 test -f "$GITLAB_AGENT_ENV_FILE"
 test -f run_mcp.sh
-unset GITLAB_BASE_URL
+unset GITLAB_BASE_URL GITLAB_TOKEN GITLAB_GIT_TOKEN GITLAB_ALLOWED_PROJECTS
 if [ -z "${CONTROL_PLANE_API_KEY:-}" ]; then
   read -r -s -p 'OpenAI tunnel runtime API key (hidden): ' CONTROL_PLANE_API_KEY </dev/tty
   printf '\n'
@@ -89,11 +63,18 @@ tunnel-client doctor --profile "$PROFILE" --explain && tunnel-client run --profi
 BASH
 ```
 
-有已导出的 runtime key 就复用，否则在本地隐藏提示输入已有 key。不会保存新输入、打印 key 或将其字面值写入 shell history。环境只作用于子 shell 与其子进程。清除 base URL 覆盖是为了读取明确的用户配置，不会编辑 `.env`；有意使用环境覆盖的部署应保留其明确策略。GitLab Token 的旧导出值也会优先于文件，换 token 后需要清除对应旧值并重启。
+unset 仅在子 shell 中选择私有 GitLab 文件里的对应值，其他有意覆盖值需操作者核对。旧 shell export 不是持久存储；变量缺失不等于 key 过期。不要把字面 key 写入 `.zshrc`、仓库或含 token 的 curl 示例。这不是对同用户进程的隔离。
 
-### Windows PowerShell
+已有 **file 引用 profile** 时保留私有文件/loader，不为套用上述示例而改成环境变量。通过获准服务或 shell 为原 profile 执行上游 doctor/run，不必额外提示输入 key。
 
-保留现有 `run_mcp.ps1` profile 和 DPAPI/企业 secret loader；不要套用 Bash。先通过已批准的 loader 为 `env:` 引用设置当前会话变量，或者保留已有 `file:` 引用。在长期源码目录执行：
+GitLab `.env` loader 不解析 `GITLAB_TOKEN` 内的 Keychain/file 引用。GitLab 明文文件权限与 tunnel key 的秘密来源是两件事。API/MCP CA、原生 Git TLS 和迁移探针也要区分，详见[运行时 TLS](HTTPS_API_TLS_CN.md)，不要关闭验证解决 CA 问题。
+
+<a id="windows-powershell"></a>
+## Windows PowerShell
+
+`actual-coder-tunnel` 生命周期操作不支持 Windows；不要执行 Mac Keychain/Bash 步骤。保留现有 `run_mcp.ps1` profile 和批准的 DPAPI/企业 secret loader。由 loader 为 env 引用准备当前会话变量，或保留 file 引用；本文不创建秘密存储、不更改 Windows ACL。
+
+在实际长期源码目录执行，替换示例 profile 名：
 
 ```powershell
 $ProfileName = "selfhosted-gitlab"
@@ -105,37 +86,33 @@ if ($LASTEXITCODE -ne 0) { throw "Tunnel doctor failed; runtime was not started"
 tunnel-client.exe run --profile $ProfileName
 ```
 
-此段不创建 secret store，也不修改 Windows ACL。不要把 key 字面值写进命令、profile 或公开文档。诊断失败时先处理首个失败项，而不是安装可选 plugin 或放宽 GitLab 权限。
+核对可能覆盖私有文件的旧 `GITLAB_*` 环境值，但不打印秘密。前台服务需保持运行。doctor 失败时处理首个失败项，不安装无关插件、不放宽权限。首次 Windows 客户端安装/profile 创建遵循[上游平台说明](https://github.com/openai/tunnel-client/blob/master/docs/end-user-guide.md)，不要把本文当成自动安装程序。
 
-## 4. 验收必须在正常 ChatGPT 中完成
+## 诊断运行中的服务
 
-保持 tunnel 进程运行；不需要打开 localhost Assistant。可在 Overview/Logs 查看进程状态，但 `started`、metadata fetched、health/readiness 都不能代替真实工具调用。
+上游 localhost Overview/Logs、`/healthz`、`/readyz` 是可选诊断，不是最终验收。用你实际 profile 报告的地址，管理界面保持 loopback。**不需要**成功运行仪表盘 Assistant、Codex tunnel plugin 或 Inspector。
 
-在正常 ChatGPT 中选择已有的 GitLab 连接。按实际连接名称、允许的项目和已知存在的文件替换示例：
+仅在 `/ui#codex` 出现 `approval policy is never`，不能证明普通 ChatGPT 隧道失败。不要为可选面板放宽全局审批或无限制 shell 权限。关闭浏览器不会停止 tunnel，也不保证上游附带 helper 被禁用。
+
+## 在普通 ChatGPT 验收读取
+
+保持所选 runtime 运行，在正确 workspace 的普通 ChatGPT 选择已有应用；更新工具集后刷新发现。替换已确认项目/ref/文件和应用名：
 
 ```text
-使用连接的 My GitLab MCP 调用 gitlab_whoami，然后读取 team/project-a
-的 main 分支 README.md。报告认证用户名并根据实时工具结果概括文件。
-若工具不可用或调用被阻断，请明确报告，不用之前的对话、本地凭证笔记、
-网页搜索或带 token 的 shell 命令代替。
+只使用连接的 My GitLab MCP。先调用 gitlab_whoami，再调用
+check_project_access(project="team/project-a", ref="main", required_files=["README.md"])。
+若工具不可用或 ok=false，报告诊断和所需用户操作，停止等待。
+不要把隐藏/缺失项目断言为一定不存在。
+成功后调用 get_file：project="team/project-a"、file_path="README.md"、
+ref 使用返回的 resolved_commit_sha。概括真实内容，仅报告实际返回修订字段。
+不使用网页、旧对话、shell、凭证文件代替；不创建项目、不自动授权、
+不实现、不发布、不合并。
 ```
 
-只有真实身份调用和文件读取都成功，才验收 ChatGPT 读路径。README 不存在时选一个已知文本文件。结果可能含私有身份/项目数据，只在批准范围内保存，不复制进公共 issue。
+身份成功不等于项目访问，过滤列表为空不等于项目不存在。访问需要本地 MCP allowlist 与独立 GitLab 权限，不靠重建隧道。按[项目预检](PROJECT_ACCESS_CN.md)操作；不要以生产应用替换未准备好的练习仓库。
 
-不要把 `/ui#codex` 中的 `approval policy is never` 当作正常 ChatGPT 隧道失败，也不要为这个可选界面设置全局自动批准或不受限执行。若正常 ChatGPT 找不到连接，核对当前对话是否选择它、目标 ChatGPT workspace 的关联与权限，以及 tunnel 是否仍运行。
+实际身份/预检/文件读取成功，只验收读取路径，不证明 Git push、编程客户端登录或完整应用构建。批准任务后再按[工作流程](WORKFLOW_CN.md)和[人工交接](TASK_HANDOFF_TEMPLATE_CN.md)推进。当前 MCP 没有本地执行入口。旧 `smoke_test.py` 未使用统一 runtime TLS factory，不是本指南的验收门槛。
 
-## 5. 新成员首次接入
+## 一手参考
 
-先按[中文快速上手](QUICKSTART_CN.md)配置源码与用户 GitLab 设置；不要覆盖已有 `.env`。MCP 只读场景不要求安装编码 backend；查看 doctor 具体检查，不把缺少 Codex/Copilot 当成读协议本身失败。
-
-使用官方支持的 tunnel-client，先看 `--version`、`help quickstart` 和 `profiles list`。在 [Platform Tunnels](https://platform.openai.com/settings/organization/tunnels) 与 [Runtime API keys](https://platform.openai.com/settings/organization/api-keys)创建或复用授权对象。仅确实没有合适 profile 时，按[英文首次接入步骤](SETUP_TUTORIAL.md#first-time-connection)初始化；已有成员直接使用上面的重启路径。
-
-不将 `smoke_test.py`、Inspector、localhost Assistant 或 Codex tunnel plugin 作为必需验收步骤。旧 smoke helper 不经过统一 Python TLS client。证书问题按[运行时 TLS 范围](HTTPS_API_TLS_CN.md)区分 API、native Git 与迁移探针；已完成的 URL 迁移无需重做。
-
-## 6. 完成后停止重复诊断
-
-完成的读验收不等于 Git push、完整应用构建或编码 CLI 登录成功；写入测试留给另行批准的真实任务。正常使用时可关闭仪表盘网页，但 tunnel 进程需继续运行。重启代码/配置时更新原 launcher，已有 profile/Tunnel ID 不因源码目录改名而需要重建。
-
-下一步是[手工任务交接与返回证据](TASK_HANDOFF_TEMPLATE.md)，不是再增加一个聊天界面。统一 handoff、workspace locking、持久化 TaskSpec 与 EvidencePack 仍按 Issue #6 独立实现。
-
-参考：[官方隧道说明](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)、[上游 end-user guide](https://github.com/openai/tunnel-client/blob/master/docs/end-user-guide.md)、[profile 与 secret reference](https://github.com/openai/tunnel-client/blob/master/docs/configuration.md)。上游界面/选项会变化，核对安装版本；本文不会自动关闭附带 helper 或改变本机部署。
+[OpenAI 隧道与当前 ChatGPT 连接界面](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)、[developer mode 资格](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)、[上游配置](https://github.com/openai/tunnel-client/blob/master/docs/configuration.md)、[上游运维指南](https://github.com/openai/tunnel-client/blob/master/docs/end-user-guide.md)。
