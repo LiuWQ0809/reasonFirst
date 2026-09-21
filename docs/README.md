@@ -9,6 +9,7 @@ These guides describe the source revision containing them. A merged feature is n
 | Topic | English | 简体中文 |
 | --- | --- | --- |
 | Product and supported capabilities | [ReasonFirst](../README.md) | [项目说明](../README_CN.md) |
+| Start the required tunnel service and manage its lifecycle | [Reliable start/status/stop/restart](TUNNEL_LIFECYCLE.md) | [可靠启动、状态、停止与重启](TUNNEL_LIFECYCLE_CN.md) |
 | Before using a newly proposed GitLab project | [Access preflight and user grants](PROJECT_ACCESS.md) | [项目预检与用户授权](PROJECT_ACCESS_CN.md) |
 | Rehearse ChatGPT, Codex and three rounds of one MR | [Practice lab](PRACTICE_LAB.md) | [实战演练](PRACTICE_LAB_CN.md) |
 | Which interface to use and what each check proves | [Workflow](WORKFLOW.md) | [工作流程](WORKFLOW_CN.md) |
@@ -23,6 +24,10 @@ These guides describe the source revision containing them. A merged feature is n
 | Contribution process | [Contributing](../CONTRIBUTING.md) | [贡献指南](../CONTRIBUTING_CN.md) |
 | Security reporting and current limitations | [Security policy](../SECURITY.md) | [安全策略与边界](../SECURITY_CN.md) |
 | Before announcing a public release | [Maintainer checklist](PUBLIC_RELEASE_CHECKLIST.md) | [公开发布清单](PUBLIC_RELEASE_CHECKLIST_CN.md) |
+
+## Required before the first ChatGPT prompt
+
+For the tunnel-based path, start the existing tunnel/MCP and keep it running before using the practice or repository-reading prompts. The [lifecycle helper](TUNNEL_LIFECYCLE.md) saves non-secret startup references once and provides foreground start, truthful local status and owner-specific stop/restart on macOS/Linux. It does not replace project authorization or the real ChatGPT acceptance call. The localhost Assistant is not required. Manual startup remains available in the operator guide; do not mix two launchers for one instance or mistake an earlier shell export for persistent credential storage.
 
 ## New-project access gate
 

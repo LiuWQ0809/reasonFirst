@@ -2,7 +2,7 @@
 
 [English](README.md) · **简体中文**
 
-<!-- Translation source: docs/README.md @ a3e33c72c55efef6a0dc3808fb9853c62ad15f9d; navigation, access-gate and translation-maintenance sections maintained together with the English index. -->
+<!-- Translation source: docs/README.md @ a3e33c72c55efef6a0dc3808fb9853c62ad15f9d; navigation, lifecycle/access gates and translation-maintenance sections maintained together with the English index. -->
 
 这些指南描述的是包含它们的源码修订。某项功能已经合并，不代表最近的发布 tag 一定包含它。参见[项目说明](../README_CN.md)和 [Unreleased 更新记录](../CHANGELOG.md)。
 
@@ -11,6 +11,7 @@
 | 主题 | 简体中文 | English |
 | --- | --- | --- |
 | 产品与支持的能力 | [项目说明](../README_CN.md) | [ReasonFirst](../README.md) |
+| 启动必需的 Tunnel 服务并管理生命周期 | [可靠启动、状态、停止与重启](TUNNEL_LIFECYCLE_CN.md) | [Reliable start/status/stop/restart](TUNNEL_LIFECYCLE.md) |
 | 使用新提出的 GitLab 项目之前 | [项目预检与用户授权](PROJECT_ACCESS_CN.md) | [Access preflight and grants](PROJECT_ACCESS.md) |
 | 演练 ChatGPT、Codex 与同一 MR 的三轮审查 | [实战演练](PRACTICE_LAB_CN.md) | [Practice lab](PRACTICE_LAB.md) |
 | 各界面的用途，以及每项检查能证明什么 | [工作流程](WORKFLOW_CN.md) | [Workflow](WORKFLOW.md) |
@@ -25,6 +26,10 @@
 | 贡献流程 | [贡献指南](../CONTRIBUTING_CN.md) | [Contributing](../CONTRIBUTING.md) |
 | 安全报告与当前限制 | [安全策略](../SECURITY_CN.md) | [Security](../SECURITY.md) |
 | 公开发布之前 | [维护者检查清单](PUBLIC_RELEASE_CHECKLIST_CN.md) | [Release checklist](PUBLIC_RELEASE_CHECKLIST.md) |
+
+## 第一次 ChatGPT 对话之前的必需步骤
+
+Tunnel 接入方式下，使用演练或仓库读取提示词之前，必须启动既有 Tunnel/MCP 并保持运行。[生命周期辅助程序](TUNNEL_LIFECYCLE_CN.md)只需一次保存不含秘密的启动引用，即可在 macOS/Linux 前台启动、检查真实本地状态，并按 owner 身份停止/重启。它不代替项目授权或实际 ChatGPT 调用验收，localhost Assistant 仍不是必需组件。操作指南中保留手动启动方式；不能混用两个启动器管理同一实例，也不能把早先 shell 的 export 当成永久保存凭证。
 
 ## 新项目访问门槛
 
