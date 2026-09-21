@@ -112,7 +112,15 @@ class AgentSettings:
         base_url = validate_base_url(base_url)
 
         api_token = os.getenv("GITLAB_TOKEN", "").strip()
-        git_token = os.getenv("GITLAB_GIT_TOKEN", "").strip() or api_token
+        # Git over HTTPS treats the credential as a password. Allow an explicit
+        # password setting for self-managed GitLab instances that permit
+        # username/password authentication, while retaining token fallbacks.
+        git_password = os.getenv("GITLAB_GIT_PASSWORD", "").strip()
+        git_token = (
+            git_password
+            or os.getenv("GITLAB_GIT_TOKEN", "").strip()
+            or api_token
+        )
 
         root = Path(
             os.getenv(
