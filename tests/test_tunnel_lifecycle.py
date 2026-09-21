@@ -637,6 +637,57 @@ class TunnelFixture(unittest.TestCase):
                 self.assertEqual(error.exception.code, "child_reaping_unsupported")
                 launch.assert_not_called()
 
+    def test_darwin_zombie_only_group_allows_reap_after_eperm(self):
+        for signals in ([PermissionError()], [None, PermissionError()]):
+            with self.subTest(signals=len(signals)):
+                child = Mock(pid=12345, returncode=None)
+                child.poll.side_effect = AssertionError("Do not reap before group evidence")
+                result = subprocess.CompletedProcess([], 0, b"0 0 Ss\n1 1 Ss\n12345 12345 Zs\n12346 12345 Z\n", b"")
+                with patch.object(tunnel.sys, "platform", "darwin"), \
+                     patch.object(tunnel.os, "killpg", side_effect=signals) as send, \
+                     patch.object(tunnel.subprocess, "run", return_value=result) as inspect, \
+                     patch.object(tunnel.time, "monotonic", side_effect=[0, 5]):
+                    tunnel.terminate_owned(child)
+                self.assertEqual(send.call_count, len(signals))
+                inspect.assert_called_once_with(
+                    ["/bin/ps", "-ax", "-o", "pid=,pgid=,stat="],
+                    env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+                    capture_output=True, timeout=2, check=False)
+                child.poll.assert_not_called()
+                child.wait.assert_called_once_with(timeout=5)
+
+    def test_darwin_eperm_requires_complete_zombie_only_evidence(self):
+        for body in (b"", b"12345 12345 S\n", b"12345 12345 Z\n12346 12345 S\n",
+                     b"12346 12345 Z\n", b"12345 54321 Z\n", b"malformed\n",
+                     b"12345 12345 Z\n12345 12345 Z\n", b"12345 12345 Z\n\xff",
+                     b"x" * (tunnel.MAX_FILE + 1)):
+            with self.subTest(body_length=len(body)), \
+                 patch.object(tunnel.sys, "platform", "darwin"), \
+                 patch.object(tunnel.os, "killpg", side_effect=PermissionError), \
+                 patch.object(tunnel.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, body, b"not-exported")):
+                child = Mock(pid=12345, returncode=None)
+                with self.assertRaises(PermissionError): tunnel.terminate_owned(child)
+                child.poll.assert_not_called()
+                child.wait.assert_not_called()
+
+    def test_darwin_process_inspection_failure_is_not_ignored(self):
+        for result in (subprocess.CompletedProcess([], 1, b"12345 12345 Z\n", b"private-error"),
+                       OSError("private-error"), subprocess.TimeoutExpired(["/bin/ps"], 2)):
+            with self.subTest(result_type=type(result).__name__), \
+                 patch.object(tunnel.sys, "platform", "darwin"), \
+                 patch.object(tunnel.os, "killpg", side_effect=PermissionError), \
+                 patch.object(tunnel.subprocess, "run") as inspect:
+                if isinstance(result, Exception): inspect.side_effect = result
+                else: inspect.return_value = result
+                with self.assertRaises(PermissionError): tunnel.signal_owned_group(12345, signal.SIGTERM)
+
+    def test_non_darwin_permission_failure_has_no_process_inspection(self):
+        with patch.object(tunnel.sys, "platform", "linux"), \
+             patch.object(tunnel.os, "killpg", side_effect=PermissionError), \
+             patch.object(tunnel.subprocess, "run") as inspect:
+            with self.assertRaises(PermissionError): tunnel.signal_owned_group(12345, signal.SIGTERM)
+            inspect.assert_not_called()
+
     def test_stop_already_stopped_is_idempotent(self):
         _, result = self.call("stop")
         self.assertEqual(result["state"], "already_stopped")

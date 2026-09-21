@@ -441,6 +441,59 @@ def stop(settings: Settings, *, expected: str | None = None) -> dict:
     fail("stop_timeout", "The owner did not finish stopping. Inspect its Terminal; no unrelated process was signalled.")
 
 
+def darwin_zombie_only_group(pgid: int) -> bool:
+    """Disambiguate Darwin killpg EPERM without reaping the owned leader.
+
+    XNU killpg1 excludes SZOMB members, so an all-zombie group can yield EPERM.
+    Accept only a successful numeric ps snapshot containing the pinned leader
+    and no live member of its group. No command lines, environments, usernames
+    or returned PIDs are used as signal targets. Never generalize EPERM away.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-ax", "-o", "pid=,pgid=,stat="],
+            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+            capture_output=True, timeout=2, check=False,
+        )
+        if result.returncode or not result.stdout or len(result.stdout) > MAX_FILE:
+            return False
+        leader_seen = False
+        seen = set()
+        for line in result.stdout.decode("ascii").splitlines():
+            fields = line.split()
+            if (len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit()
+                    or len(fields[0]) > 10 or len(fields[1]) > 10
+                    or not re.fullmatch(r"[A-Za-z?][A-Za-z0-9+<>/=\-]{0,15}", fields[2])):
+                return False
+            pid, group = int(fields[0]), int(fields[1])
+            if (pid == 0 and group != 0) or pid in seen:
+                return False
+            seen.add(pid)
+            if pid == pgid and group != pgid:
+                return False
+            if group == pgid:
+                if not fields[2].startswith("Z"):
+                    return False
+                leader_seen = leader_seen or pid == pgid
+        return leader_seen
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def signal_owned_group(pgid: int, signum: int) -> bool:
+    try:
+        os.killpg(pgid, signum)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        if darwin_zombie_only_group(pgid):
+            return False
+        raise  # a real permission failure or incomplete evidence is not success
+
+
 def terminate_owned(child: subprocess.Popen) -> None:
     """Finish signalling the owned group BEFORE reaping its leader.
 
@@ -450,9 +503,7 @@ def terminate_owned(child: subprocess.Popen) -> None:
     """
     if child.returncode is not None:
         return  # already reaped: never signal a potentially reused PID/PGID
-    try:
-        os.killpg(child.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    if not signal_owned_group(child.pid, signal.SIGTERM):
         child.wait(timeout=5)
         return
     # Keep the full existing five-second TERM grace for every member, including
@@ -460,10 +511,7 @@ def terminate_owned(child: subprocess.Popen) -> None:
     deadline = time.monotonic() + 5
     while (remaining := deadline - time.monotonic()) > 0:
         time.sleep(min(0.1, remaining))
-    try:
-        os.killpg(child.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_owned_group(child.pid, signal.SIGKILL)
     child.wait(timeout=5)
 
 
