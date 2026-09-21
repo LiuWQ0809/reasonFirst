@@ -1,6 +1,6 @@
 # ReasonFirst
 
-**English** · [简体中文](README_CN.md) · [Bilingual documentation index](docs/README.md)
+**English** · [简体中文](README_CN.md) · **[First-time setup](docs/GETTING_STARTED.md)** · [Documentation index](docs/README.md)
 
 > **Reasoning-first coding orchestration.**
 > Use your strongest reasoning model for reasoning. Let coding agents do the coding.
@@ -10,126 +10,115 @@
 
 ReasonFirst connects interactive engineering reasoning with replaceable coding agents and a local GitLab workflow. A human and their chosen reasoning interface define the task; **ActualCoder** prepares a Git worktree, hands the task to **Codex CLI** or **GitHub Copilot CLI**, and supplies validation, Merge Request, and CI evidence for review.
 
-The goal is to spend reasoning capacity on architecture, diagnosis, and review, while delegating implementation iterations to coding agents. ReasonFirst is not a model proxy, a quota-transfer service, or an auto-merge bot. It makes no direct model-inference calls; external coding tools use their own authentication and billing arrangements. Cost savings are a design goal, not a measured guarantee.
+The goal is to spend reasoning capacity on architecture, diagnosis, and review while delegating implementation iterations. ReasonFirst is not a model proxy, quota-transfer service, or auto-merge bot. It makes no direct model-inference calls; external coding tools use their own authentication and billing. Cost savings are a design goal, not a measured guarantee.
 
-**Early-stage developer tooling:** use trusted repositories on a trusted development host. A Git worktree is not a security sandbox. Read [SECURITY.md](SECURITY.md) before using real credentials or executing repository code.
+**Early-stage developer tooling:** use trusted repositories on a trusted development host. A Git worktree is not a security sandbox. Read [SECURITY.md](SECURITY.md) before using real credentials or executing repository code. A private MCP endpoint still returns selected data to the connected reasoning service; obtain the relevant data-sharing approval.
 
-## Start here
+## Start here: get connected before asking ChatGPT to work
+
+**Follow [the complete first-time setup guide](docs/GETTING_STARTED.md) ([中文](docs/GETTING_STARTED_CN.md)) in order.** It includes installation commands, where to obtain each credential, Keychain storage, a local profile, service startup, ChatGPT app selection, and a live repository-read test. You should not need earlier chat messages to reconstruct setup.
+
+| Prepare | Why it is needed |
+| --- | --- |
+| Git, uv/Python, ReasonFirst and the separate `tunnel-client` binary | The new supervisor does not install the upstream tunnel agent. |
+| GitLab URL, confirmed project/ref/file, read token and explicit local allowlist | A proposed project name or local folder does not prove remote existence or access. |
+| OpenAI Platform tunnel permissions, tunnel ID and runtime API key | Tunnel identity and runtime authentication are different values. |
+| ChatGPT custom-app/developer-mode permission and workspace association | A locally running tunnel is not automatically attached to a conversation. |
+| Keychain or another explicit supported secret source | An earlier shell export is not persistent storage. |
+
+Codex/Copilot login, Git write permissions and a CI runner are **later implementation prerequisites**, not prerequisites to reading GitLab in ChatGPT. Current provider permissions/eligibility are linked in the setup guide; no subscription name guarantees them. The tunnel runtime key is still required even though ReasonFirst makes no model API calls.
+
+```text
+First time: permissions -> install -> GitLab config -> tunnel ID/key/profile
+Each stopped session: start -> local status -> select the app in normal ChatGPT
+Each new project: gitlab_whoami -> check_project_access -> files at resolved commit
+Approved work: ChatGPT plan -> human handoff -> Codex/ActualCoder -> MR/CI -> review
+```
+
+Once configured, use `actual-coder-tunnel start` in Terminal A and `actual-coder-tunnel status` in Terminal B. **Keep Terminal A running.** `ready_for_chatgpt_check` is local readiness, not end-to-end acceptance. Select the existing app in the normal ChatGPT composer and perform the guide's live identity/preflight/file read before starting work.
+
+The **localhost Assistant is not required**. Overview/Logs are optional diagnostics. Omitting the Assistant UI does not uninstall Codex or guarantee that an upstream bundled helper is disabled. Do not disable approval controls to make that optional panel work.
+
+## Guides by task
 
 | Goal | Guide |
 | --- | --- |
-| Know where reasoning, transport, and coding happen | [One reasoning interface, one implementation workflow](docs/WORKFLOW.md) |
-| Install and run a first task | [Current quickstart](docs/ACTUAL_CODER_QUICKSTART.md) |
-| 中文安装与日常使用 | [当前中文快速上手](docs/QUICKSTART_CN.md) |
-| Connect or restart normal ChatGPT's GitLab reads | [MCP operator guide](docs/SETUP_TUTORIAL.md) · [中文](docs/OPENAI_TUNNEL_TEAM_SETUP_CN.md) |
-| Carry approved requirements and return evidence | [Manual task handoff template](docs/TASK_HANDOFF_TEMPLATE.md) |
-| Understand the architecture | [Design philosophy](docs/DESIGN_PHILOSOPHY.md) |
-| Move an existing GitLab installation to HTTPS | [English migration guide](docs/HTTPS_MIGRATION.md) · [中文迁移指南](docs/HTTPS_MIGRATION_CN.md) |
-| Configure API/MCP certificates and understand redirect errors | [Runtime TLS](docs/HTTPS_API_TLS.md) · [中文](docs/HTTPS_API_TLS_CN.md) |
-| Check out a PR directly, without ZIP files | [Local PR review](docs/LOCAL_PR_REVIEW.md) |
-| Contribute or report a problem | [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md#reporting-a-security-issue) |
-| Find current versus historical documentation | [Documentation index](docs/README.md) |
+| First-time ChatGPT connection, from prerequisites to first prompt | **[Complete setup](docs/GETTING_STARTED.md)** · **[中文](docs/GETTING_STARTED_CN.md)** |
+| Already configured: start/status/stop/restart | [Tunnel lifecycle](docs/TUNNEL_LIFECYCLE.md) · [中文](docs/TUNNEL_LIFECYCLE_CN.md) |
+| Confirm a new project's existence/access and obtain an explicit grant | [Project access](docs/PROJECT_ACCESS.md) · [中文](docs/PROJECT_ACCESS_CN.md) |
+| Rehearse the reasoning/worker/MR loop | [Practice lab](docs/PRACTICE_LAB.md) · [中文](docs/PRACTICE_LAB_CN.md) |
+| Understand interface responsibilities | [Workflow](docs/WORKFLOW.md) · [中文](docs/WORKFLOW_CN.md) |
+| Local-only installation and controlled implementation | [CLI quickstart](docs/ACTUAL_CODER_QUICKSTART.md) · [中文](docs/QUICKSTART_CN.md) |
+| Approved requirements and observed results | [Manual handoff template](docs/TASK_HANDOFF_TEMPLATE.md) · [中文](docs/TASK_HANDOFF_TEMPLATE_CN.md) |
+| Architecture | [Design philosophy](docs/DESIGN_PHILOSOPHY.md) · [中文](docs/DESIGN_PHILOSOPHY_CN.md) |
+| Existing HTTP-to-HTTPS migration | [Migration](docs/HTTPS_MIGRATION.md) · [中文](docs/HTTPS_MIGRATION_CN.md) |
+| Certificates, API redirects and native Git boundaries | [Runtime TLS](docs/HTTPS_API_TLS.md) · [中文](docs/HTTPS_API_TLS_CN.md) |
+| Review a PR or update the normal checkout | [Local PR review](docs/LOCAL_PR_REVIEW.md) · [中文](docs/LOCAL_PR_REVIEW_CN.md) |
+| Unsupported/advanced profiles or manual startup | [Manual operator guide](docs/SETUP_TUTORIAL.md) · [中文/Windows](docs/OPENAI_TUNNEL_TEAM_SETUP_CN.md) |
+| Troubleshoot, contribute or report securely | [Troubleshooting](docs/TROUBLESHOOTING.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) |
 
-## How it works
+## How implementation works
 
 ```text
-Human + reasoning interface
-  define goal, constraints, acceptance criteria
-                  |
-                  v
-ActualCoder / gitlab-agent
-  prepare workspace and bounded handoff
-                  |
-                  v
-Codex CLI or Copilot CLI
-  inspect -> implement -> test
-                  |
-                  v
-finish review -> feature branch / GitLab MR -> CI evidence
-                  |
-                  v
-Human + reasoning interface review and decide the next step
+Human + reasoning interface: define goal, constraints, acceptance criteria
+    -> ActualCoder: prepare a worktree and bounded handoff
+    -> Codex/Copilot: inspect, implement, test
+    -> Human-reviewed finish: feature branch / GitLab MR
+    -> CI evidence and live ChatGPT review
+    -> Human decides whether to continue or merge
 ```
 
-The optional read-only GitLab MCP bridge lets a reasoning client inspect repositories, MRs, and CI. **It does not currently submit or execute local coding tasks through MCP.** The human operates the local CLI and carries task/result context between the interfaces. Persistent task specifications and a unified evidence API are planned, not shipped.
+The read-only MCP bridge exposes repository/MR/CI inspection. **It does not submit or execute local coding tasks, or read unpublished local changes.** The user operates the local CLI and carries approved task/result context between interfaces. Persistent TaskSpec and EvidencePack access are planned, not shipped; the handoff template is a writing aid.
 
-**For the recommended ChatGPT workflow, no localhost Assistant is needed.** Use a normal ChatGPT conversation for reasoning and review; keep `tunnel-client` and `server.py` running for the tunnel-based read connection; use ActualCoder plus the selected coding CLI for implementation. The local dashboard's Overview/Logs are optional diagnostics. Its Assistant tab and Codex tunnel plugin are not onboarding requirements or acceptance gates. Not using that UI does not uninstall the coding CLI or guarantee that the upstream client's bundled helper is disabled.
+After confirming the real project with the [access preflight](docs/PROJECT_ACCESS.md), follow the [CLI quickstart](docs/ACTUAL_CODER_QUICKSTART.md) or [practice lab](docs/PRACTICE_LAB.md). `start --no-launch` creates a real local workspace and handoff without invoking a coding model; it is not a no-side-effect preview. Do not keep calling `start` to continue the same task: retain its workspace ID and use `resume`.
 
-Validate the read path with live identity and file calls in normal ChatGPT, not an answer in `/ui#codex`. The [workflow guide](docs/WORKFLOW.md) separates startup, API/Git access, read acceptance, and approved writes. The [manual handoff template](docs/TASK_HANDOFF_TEMPLATE.md) is a writing aid, not an implemented TaskSpec/EvidencePack format.
+Inspect actual local changes before `finish --dry-run`, then explicitly approve real `finish`. **Dry-run runs configured validation commands; it means no commit/push, not no code execution.** Missing `.actualcoder.yaml` is allowed but supplies no project-specific tests. A green result without real required tests is not adequate task acceptance.
 
-GitLab is the current target SCM/CI integration. This project's source is hosted on GitHub; that does not imply a GitHub-target task adapter exists. Architecture is provider-neutral in intent; the implemented coding adapters are currently `codex` and `copilot`.
+`resume --from-ci` returns matching-HEAD failure evidence, not automatic repair execution. Do not invent changes for successful CI. Low-level `commit`/`push` commands and some existing generated handoffs do not run every finish gate; retain explicit task boundaries and use the reviewed finish flow. See [workflow](docs/WORKFLOW.md).
+
+GitLab is the implemented target SCM/CI integration. Hosting this tool's source on GitHub does not imply a GitHub-target task adapter exists. The coding backends are currently `codex` and `copilot`.
 
 ## Try the source without production credentials
 
-Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/). Package metadata requires Python 3.10+; the current CI matrix exercises Python 3.12 on Ubuntu, macOS, and Windows. Use 3.12 to reproduce it.
-
-Run from a new checkout, one command at a time; stop on errors:
+For contributors who want only tests/help, install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/). Package metadata requires Python 3.10+; CI uses 3.12. Use a new checkout and stop on errors:
 
 ```bash
 git clone https://github.com/phoenixjyb/reasonFirst.git
 cd reasonFirst
 uv sync --python 3.12
 uv run actual-coder --help
-uv run actual-coder-migrate-https --help
+uv run actual-coder-tunnel --help
+uv run actual-coder-check-project --help
 uv run python -m unittest discover -s tests -v
 uv run python scripts/check_repo_secrets.py --history
 ```
 
-These regression tests use temporary repositories, mocked services, and loopback TLS fixtures, not production tokens or paid model sessions. Installing dependencies may access package indexes. Do not point test fixtures at a live workspace.
+Tests use temporary repositories, mocked services and loopback fixtures, not production credentials or a real tunnel. Installing dependencies accesses package indexes. Local `uv sync` can create an untracked `uv.lock` at this source baseline; preserve it rather than ignoring/resetting unrelated files. MCP/tunnel setup is unnecessary for this local-only test path.
 
-For real use, follow the [quickstart](docs/ACTUAL_CODER_QUICKSTART.md): configure your own GitLab HTTPS endpoint, least-privilege tokens, an explicit project allowlist, and a supported coding CLI. MCP/tunnel setup is optional for the local workflow.
+## What is available on main
 
-## The recommended task loop
-
-From the ReasonFirst source checkout, use `uv run` so you execute that checkout's environment. Replace `team/project-a` and the example workspace ID with your own values.
-
-```bash
-uv run actual-coder start team/project-a --task fix-timeout --goal "Fix the timeout bug; preserve the public API and add regression coverage" --no-launch
-```
-
-`--no-launch` prepares a real managed workspace and handoff, but does not invoke a coding model. It is **not** a no-side-effect dry run. Review the handoff, then use the returned backend command and prompt to perform the task, or omit `--no-launch` on a new `start` to launch interactively.
-
-After implementation, review and finish the returned workspace:
-
-```bash
-WS="012345abcdef"
-uv run actual-coder status "$WS"
-uv run actual-coder finish "$WS" --message "fix: handle timeout and add regression test" --dry-run
-uv run actual-coder finish "$WS" --message "fix: handle timeout and add regression test"
-uv run actual-coder ci "$WS"
-```
-
-Run the actual `finish` only after inspecting the preview and confirming the intended writes. **Finish dry-run still executes configured project validation commands; it means no commit/push, not no code execution.** A missing `.actualcoder.yaml` is allowed but supplies no project-specific validation commands. Add real build/test requirements before relying on finish as a quality gate.
-
-For a genuine CI failure, `resume --from-ci` returns a handoff tied to matching-HEAD CI. It does not launch a repair automatically. Success is not a reason to invent changes. Low-level `commit`/`push` commands and some existing generated handoffs expose manual routes; those routes do **not** run all finish gates. Review worker actions and use `finish` for the primary flow.
-
-## What is available on `main`
-
-The last documented release is **v0.3.0**. Post-release changes below are merged source changes; package version metadata still reads `0.3.0`. Identify bug reports by commit SHA as well as version. See [CHANGELOG.md](CHANGELOG.md).
+The last documented release is **v0.3.0**; merged source changes need not be in that tag, and package metadata still reads `0.3.0`. Record the commit SHA as well as version in bug reports. See [CHANGELOG.md](CHANGELOG.md).
 
 | Capability | Current scope |
 | --- | --- |
 | Managed workspaces | Local Git caches/worktrees, feature branches, MR creation/update/recovery |
-| Controlled finish | Base-policy validation, reviewability/protected-path checks, candidate and bounded commit-history secret scanning, human confirmation |
-| Publication safety | Fresh remote evidence before ordinary cleanup; unpublished abandoned branches preserved |
-| Command results | Nonzero child failures and timeouts propagate to the shell |
-| CI feedback | Matching-HEAD evidence and shared bounded/sanitized CLI/MCP failed-job logs |
-| HTTPS migration | Explicit offline preview and confirmed local URL updates, with private backups and forward recovery |
-| API/MCP transport | Verified public roots plus optional Python-only private CA; request-destination checks and rejection of all API redirects |
-| Read-only MCP | Project/file/MR/pipeline/job inspection; no local task execution endpoint |
+| Controlled finish | Base-policy tests, reviewability/protected paths, candidate/bounded-history secret checks, human confirmation |
+| Publication safety | Fresh remote evidence before ordinary cleanup; unpublished abandoned work preserved |
+| Command/CI evidence | Nonzero failures propagate; matching-HEAD CI and bounded/sanitized job logs |
+| Project-access preflight | Local allowlist -> GitLab project/ref/files; actionable diagnostics and pinned revision; no automatic grant |
+| Tunnel lifecycle | Existing-profile configure/start/status/stop/restart on macOS/Linux, optional exact Keychain lookup, owned process cleanup; foreground only |
+| HTTPS migration | Offline preview and confirmed local URL updates, private backups and forward recovery |
+| API/MCP transport | Verified roots plus optional Python-only private CA, destination checks and no API redirects |
+| Read-only MCP | Files, projects, MRs, pipelines and jobs; no local task-execution endpoint |
 
-**Not yet delivered:** native Git trust/destination-policy integration and layered API-versus-Git diagnostics, consistent project context on every handoff route, general workspace locking/transactional recovery, persistent TaskSpec/attempt records, and EvidencePack access. The migration-only lock does not provide these capabilities. [HTTPS work](https://github.com/phoenixjyb/reasonFirst/issues/10) and the [task-loop roadmap](https://github.com/phoenixjyb/reasonFirst/issues/6) track them.
+**Still planned:** native Git trust/destination integration, uniform project context on every handoff route, general workspace locking/transactional recovery, persistent TaskSpec/attempt records and EvidencePack access. Migration and tunnel-owner locks do not provide general workspace concurrency protection. [Issue #6](https://github.com/phoenixjyb/reasonFirst/issues/6) and [Issue #10](https://github.com/phoenixjyb/reasonFirst/issues/10) track task-loop/HTTPS work.
 
-**Transport upgrade:** Python API/MCP clients now reject `GITLAB_VERIFY_SSL=false` and every API redirect, including same-origin redirects. Configure the final endpoint directly. For a private CA, `GITLAB_CA_BUNDLE` adds certificates to public roots without enabling proxy inheritance. It does not configure native Git or the migration command’s optional `--check-tls` probe. Publicly trusted deployments normally need no extra CA setting. See [runtime TLS](docs/HTTPS_API_TLS.md).
+API/MCP clients reject disabled TLS verification and every API redirect. Configure the final endpoint. `GITLAB_CA_BUNDLE` adds Python API/MCP trust, not native Git or the migration `--check-tls` probe. Keep those scopes distinct; see [runtime TLS](docs/HTTPS_API_TLS.md).
 
-## Names and compatibility
+## Names, compatibility and contribution
 
-**ReasonFirst** is the project; **ActualCoder** (`actual-coder`) is the high-level CLI. `gitlab-agent` is the lower-level controller and `codingagent` is a compatibility alias. Python package `gitlab_agent`, distribution `chatgpt-selfhosted-gitlab-mcp`, user config `~/.config/gitlab-agent/.env`, and existing workspace paths are intentionally retained. Do not rename managed directories as part of a source update.
+**ReasonFirst** is the project; **ActualCoder** (`actual-coder`) is the high-level CLI. `gitlab-agent` is lower-level and `codingagent` is a compatibility alias. Distribution `chatgpt-selfhosted-gitlab-mcp`, Python package `gitlab_agent`, private config `~/.config/gitlab-agent/.env` and existing workspace paths are intentionally retained. Do not rename managed directories during an update.
 
-The user installer is editable: global commands follow the source checkout from which they were installed. Keep that checkout on a reviewed ref, and use a separate worktree for PR experiments. See [local PR review](docs/LOCAL_PR_REVIEW.md) for updating the normal installation without copying downloads.
+Global editable commands follow their source checkout; use a separate worktree for PR experiments. Contributions and reproducible English/Chinese reports are welcome: [Contributing](CONTRIBUTING.md), [Security reporting](SECURITY.md#reporting-a-security-issue), [release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md). Never publish credential files, private source, migration backups or unreviewed logs in issues.
 
-## Contributing and license
-
-Contributions, reproducible bug reports, documentation improvements, and regression tests are welcome. English and Chinese reports are both welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Never attach private repositories, raw credentials, migration backups, or unreviewed logs to public issues.
-
-Licensed under the **Apache License 2.0**; see [LICENSE](LICENSE). External coding tools and services have their own licenses and terms. This is an independent project, not an official OpenAI, GitHub, or GitLab product. Maintainers should use the [public-release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md) before announcing a release.
+Licensed under **Apache License 2.0**; see [LICENSE](LICENSE). External tools have their own licenses/terms. This is an independent project, not an official OpenAI, GitHub or GitLab product.
