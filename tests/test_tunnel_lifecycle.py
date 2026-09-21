@@ -19,7 +19,7 @@ from gitlab_agent import tunnel_lifecycle as tunnel
 
 
 FAKE = r'''#!/usr/bin/env python3
-import argparse, json, os, signal, sys, time
+import argparse, json, os, signal, socket, socketserver, sys, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import yaml
@@ -76,8 +76,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try: self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError): pass
+# HTTPServer.server_bind calls getfqdn even for a numeric loopback address.
+# That can stall for >30s on hosted macOS (actions/setup-python#1223).
+# This fixture needs local TCP/HTTP, not DNS or the host's resolver state.
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+if mode.get("slow_reverse_dns"):
+    def slow_getfqdn(host):
+        (root / "resolver-called").touch()
+        time.sleep(20)
+        return host
+    socket.getfqdn = slow_getfqdn
 host, port = profile["health"]["listen_addr"].rsplit(":", 1)
-ThreadingHTTPServer((host, int(port)), Handler).serve_forever()
+(root / "server-phase.json").write_text(json.dumps({"phase": "binding"}))
+with LoopbackHTTPServer((host, int(port)), Handler) as server:
+    (root / "server-phase.json").write_text(json.dumps({"phase": "serving"}))
+    server.serve_forever()
 '''
 
 
@@ -181,11 +197,25 @@ class TunnelFixture(unittest.TestCase):
             if last and last.get("ok"):
                 return last
             time.sleep(0.1)
-        self.fail(f"Owner never ready: {last}")
+        # Fixture-only phase/boolean evidence, not suppressed provider stderr.
+        phase_path = self.source / "server-phase.json"
+        phase = json.loads(phase_path.read_text()) if phase_path.exists() else {"phase": "not_bound"}
+        self.fail(f"Owner never ready: {last}; synthetic server: {phase}; events: {self.events()}")
 
     def events(self):
         path = self.source / "events.jsonl"
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def test_loopback_fixture_avoids_reverse_dns_delay(self):
+        self.mode(slow_reverse_dns=True)
+        process = self.begin()
+        ready = self.await_ready(process)
+        self.assertEqual(ready["health_http"], 200)
+        self.assertEqual(ready["ready_http"], 200)
+        self.assertEqual(json.loads((self.source / "server-phase.json").read_text())["phase"], "serving")
+        self.assertFalse((self.source / "resolver-called").exists())
+        self.call("stop")
+        self.assertEqual(process.wait(timeout=10), 0)
 
     def test_existing_profile_validates_without_rewriting(self):
         before = self.profilepath.read_bytes()
