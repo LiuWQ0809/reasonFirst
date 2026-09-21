@@ -570,6 +570,55 @@ def _safe_config(settings: AgentSettings) -> dict[str, object]:
     }
 
 
+
+def _git_only_preflight(result: dict[str, object]) -> dict[str, object]:
+    """Treat missing GitLab API token as non-blocking for explicit Git-only flows.
+
+    Git-only still requires every other doctor check to pass, including the Git
+    HTTPS credential, workspace permissions, disk state, and coding backend.
+    """
+    checks = result.get("checks")
+    if not isinstance(checks, list):
+        return result
+    blocking = [
+        item for item in checks
+        if isinstance(item, dict)
+        and item.get("status") == "fail"
+        and item.get("name") != "gitlab_api_token"
+    ]
+    api_missing = any(
+        isinstance(item, dict)
+        and item.get("name") == "gitlab_api_token"
+        and item.get("status") == "fail"
+        for item in checks
+    )
+    if blocking or not api_missing:
+        return result
+
+    out = dict(result)
+    rewritten: list[dict[str, object]] = []
+    for item in checks:
+        if not isinstance(item, dict):
+            continue
+        copy = dict(item)
+        if copy.get("name") == "gitlab_api_token" and copy.get("status") == "fail":
+            copy["status"] = "skip"
+            copy["message"] = (
+                "GITLAB_TOKEN is intentionally absent in Git-only mode; "
+                "GitLab REST API/MCP/CI features are unavailable"
+            )
+        rewritten.append(copy)
+    summary = {"pass": 0, "skip": 0, "warn": 0, "fail": 0}
+    for item in rewritten:
+        status = str(item.get("status") or "warn")
+        summary[status] = summary.get(status, 0) + 1
+    out["checks"] = rewritten
+    out["summary"] = summary
+    out["ok"] = summary.get("fail", 0) == 0
+    out["overall"] = "warn" if summary.get("warn", 0) else "pass"
+    out["git_only"] = True
+    return out
+
 def _build_parser(prog: str = "gitlab-agent") -> argparse.ArgumentParser:
     if prog in {"actual-coder", "codingagent"}:
         product_name = "ActualCoder" if prog == "actual-coder" else "CodingAgent (compatibility alias)"
@@ -598,6 +647,11 @@ def _build_parser(prog: str = "gitlab-agent") -> argparse.ArgumentParser:
         "--offline",
         action="store_true",
         help="Skip live GitLab API connectivity/authentication check",
+    )
+    p.add_argument(
+        "--git-only",
+        action="store_true",
+        help="Allow Git HTTPS credentials without GITLAB_TOKEN; API/MCP/CI features stay disabled",
     )
 
     sub.add_parser(
@@ -664,6 +718,11 @@ def _build_parser(prog: str = "gitlab-agent") -> argparse.ArgumentParser:
         "--offline-doctor",
         action="store_true",
         help="Skip the live GitLab API check in the preflight doctor",
+    )
+    p.add_argument(
+        "--git-only",
+        action="store_true",
+        help="Accept Git-only authentication during preflight; requires a configured Git credential",
     )
     p.add_argument(
         "--no-launch",
@@ -881,6 +940,8 @@ def main(argv: list[str] | None = None, *, prog: str = "gitlab-agent") -> int:
     try:
         if args.command == "doctor":
             result = run_doctor(offline=args.offline)
+            if args.git_only:
+                result = _git_only_preflight(result)
             _print(result)
             return 0 if bool(result.get("ok")) else 1
 
@@ -945,6 +1006,8 @@ def main(argv: list[str] | None = None, *, prog: str = "gitlab-agent") -> int:
             )
         elif args.command == "start":
             preflight = run_doctor(offline=args.offline_doctor)
+            if args.git_only:
+                preflight = _git_only_preflight(preflight)
             preflight_summary = {
                 "ok": preflight.get("ok"),
                 "overall": preflight.get("overall"),
