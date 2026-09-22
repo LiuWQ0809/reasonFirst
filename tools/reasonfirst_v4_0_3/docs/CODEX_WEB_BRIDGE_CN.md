@@ -48,3 +48,53 @@ ReasonFirst launches a dedicated local `codex app-server` so ChatGPT chat remain
 
 The only per-process override is:
 
+```text
+mcp_servers.reasonfirst.enabled=false
+```
+
+This prevents the executor Codex from recursively invoking the ReasonFirst MCP server. It does **not** modify `~/.codex/config.toml` and does not disable other global configuration.
+
+## Install / upgrade
+
+```bash
+cd ~/Downloads/reasonfirst_codex_web_bridge_v4_0_2
+
+./apply_to_reasonfirst.sh \
+  /path/to/reasonFirst
+```
+
+Then configure once:
+
+```bash
+/path/to/reasonFirst/tools/codex_web_bridge/configure_v4.sh
+```
+
+`configure_v4.sh`:
+
+1. migrates `~/.config/reasonfirst/bridge.yaml` to v4;
+2. preserves named SSH targets;
+3. backs up `~/.codex/config.toml`;
+4. replaces only `[mcp_servers.reasonfirst]`;
+5. preserves all other Codex global configuration.
+
+Restart ChatGPT Desktop / Codex after changing MCP configuration.
+
+## Doctor
+
+```bash
+/path/to/reasonFirst/tools/codex_web_bridge/run_reasonfirst.sh --doctor
+```
+
+## ChatGPT Desktop
+
+After `configure_v4.sh`, restart ChatGPT Desktop. ReasonFirst is configured as a local STDIO MCP server. You can also inspect/add it under Desktop MCP server settings.
+
+The MCP command is:
+
+```bash
+/path/to/reasonFirst/tools/codex_web_bridge/run_mcp_server.sh
+```
+
+Do not expect a normal log stream when launching `run_reasonfirst.sh` manually without `--doctor`; an MCP STDIO server normally waits for JSON-RPC on stdin.
+
+## ChatGPT Web via Secure MCP Tunnel
