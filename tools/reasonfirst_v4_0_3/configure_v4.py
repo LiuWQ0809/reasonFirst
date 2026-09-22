@@ -48,3 +48,53 @@ def atomic_write(path: Path, value: str) -> None:
     finally:
         tmp.unlink(missing_ok=True)
 
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bridge-dir", required=True)
+    ap.add_argument("--bridge-config", default="~/.config/reasonfirst/bridge.yaml")
+    ap.add_argument("--codex-config", default="~/.codex/config.toml")
+    ap.add_argument("--backup-dir", default="~/.local/share/reasonfirst/backups")
+    ap.add_argument("--port", type=int, default=8765)
+    args = ap.parse_args()
+    root = Path(args.bridge_dir).expanduser().resolve()
+    if not (root / "run_mcp_server.sh").is_file():
+        ap.error(f"Missing MCP launcher in {root}")
+    if not 1 <= args.port <= 65535:
+        ap.error("--port must be between 1 and 65535")
+    bridge = Path(args.bridge_config).expanduser().resolve()
+    codex = Path(args.codex_config).expanduser().resolve()
+    backups = Path(args.backup_dir).expanduser().resolve()
+    data = yaml.safe_load(bridge.read_text(encoding="utf-8")) if bridge.exists() else {}
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        ap.error("bridge.yaml must contain a YAML object")
+    try:
+        version = int(data.get("version", 3))
+    except (ValueError, TypeError):
+        ap.error("bridge.yaml version must be 3 or 4")
+    if version not in {3, 4}:
+        ap.error(f"Unsupported bridge config version: {version}")
+    old = codex.read_text(encoding="utf-8") if codex.exists() else ""
+    tomllib.loads(old)  # Never rewrite a malformed global config.
+    base = strip_reasonfirst_mcp(old)
+    url = f"http://127.0.0.1:{args.port}/mcp"
+    managed = ("# BEGIN REASONFIRST V4 MANAGED\n"
+               "[mcp_servers.reasonfirst]\n"
+               f'url = "{url}"\n'
+               "enabled = true\n"
+               "# END REASONFIRST V4 MANAGED\n")
+    new_codex = base + ("\n" if base else "") + managed
+    tomllib.loads(new_codex)
+    for section in ("control", "defaults", "targets", "mcp", "audit"):
+        if section in data and not isinstance(data[section], dict):
+            ap.error(f"bridge.yaml {section} must be an object")
+    data["version"] = 4
+    data.setdefault("control", {})["mode"] = "mcp"
+    defaults = data.setdefault("defaults", {})
+    defaults["target"] = defaults.get("target") or "local"
+    defaults["codex_backend"] = "global-config-local"
+    targets = data.setdefault("targets", {})
+    local = targets.setdefault("local", {})
+    if not isinstance(local, dict):
