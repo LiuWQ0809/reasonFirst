@@ -298,3 +298,53 @@ print(json.dumps({"path":rel,"bytes":p.stat().st_size}))
     def apply_patch(self, state: dict[str, Any], patch: str) -> dict[str, Any]:
         raw = str(patch).encode("utf-8")
         if len(raw) > 4 * 1024 * 1024:
+            raise RemoteWorkspaceError("patch payload is too large")
+        import base64
+        payload = base64.b64encode(raw).decode("ascii")
+        wt = shlex.quote(str(state["worktree_path"]))
+        script = r'''
+import base64, pathlib, subprocess, sys
+root=pathlib.Path(sys.argv[1]).resolve(); payload=sys.argv[2]
+patch=base64.b64decode(payload.encode("ascii"))
+proc=subprocess.run(["git","-C",str(root),"apply","--whitespace=nowarn","-"],input=patch,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+sys.stdout.buffer.write(proc.stdout)
+sys.stderr.buffer.write(proc.stderr)
+raise SystemExit(proc.returncode)
+'''
+        cmd = "python3 -c {} {} {}".format(
+            shlex.quote(script), wt, shlex.quote(payload),
+        )
+        proc = self._ssh(cmd, timeout=90, check=False)
+        return {
+            "ok": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout[-12000:],
+            "stderr": proc.stderr[-12000:],
+        }
+
+    @staticmethod
+    def _command_block_reason(command: str) -> str | None:
+        text = str(command or "").strip()
+        if not text:
+            return "empty command"
+        lowered = " " + re.sub(r"\s+", " ", text.lower()) + " "
+        blocked = [
+            (r"(^|[;&| ])sudo([ ;&|]|$)", "sudo is not allowed"),
+            (r"(^|[;&| ])su([ ;&|]|$)", "su is not allowed"),
+            (r"(^|[;&| ])ssh([ ;&|]|$)", "nested ssh is not allowed"),
+            (r"(^|[;&| ])scp([ ;&|]|$)", "scp is not allowed"),
+            (r"(^|[;&| ])sftp([ ;&|]|$)", "sftp is not allowed"),
+            (r"(^|[;&| ])git\s+push([ ;&|]|$)", "git push is not allowed"),
+            (r"(^|[;&| ])git\s+reset\s+--hard([ ;&|]|$)", "git reset --hard is not allowed"),
+            (r"(^|[;&| ])git\s+clean([ ;&|]|$)", "git clean is not allowed"),
+            (r"(^|[;&| ])shutdown([ ;&|]|$)", "shutdown is not allowed"),
+            (r"(^|[;&| ])reboot([ ;&|]|$)", "reboot is not allowed"),
+            (r"(^|[;&| ])poweroff([ ;&|]|$)", "poweroff is not allowed"),
+            (r"(^|[;&| ])systemctl\s+(stop|disable|mask)([ ;&|]|$)", "service stopping is not allowed"),
+        ]
+        for pattern, reason in blocked:
+            if re.search(pattern, lowered):
+                return reason
+        if "rm -rf /" in lowered or "rm -fr /" in lowered:
+            return "destructive root deletion is not allowed"
+        return None
