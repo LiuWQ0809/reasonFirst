@@ -598,3 +598,50 @@ class AppServerClient:
     def update_thread_metadata(
         self,
         thread_id: str,
+        *,
+        branch: str = "",
+        sha: str = "",
+        origin_url: str = "",
+        is_pinned: bool = True,
+    ) -> dict[str, Any]:
+        git_info: dict[str, Any] = {}
+        if branch:
+            git_info["branch"] = branch
+        if sha:
+            git_info["sha"] = sha
+        if origin_url:
+            git_info["originUrl"] = origin_url
+        params: dict[str, Any] = {"threadId": thread_id, "isPinned": bool(is_pinned)}
+        if git_info:
+            params["gitInfo"] = git_info
+        result = self.request("thread/metadata/update", params, timeout=30)
+        return result if isinstance(result, dict) else {}
+
+    def list_threads(self, *, search_term: str = "", limit: int = 50) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "limit": max(1, min(int(limit), 100)),
+            "sourceKinds": ["appServer", "cli", "vscode", "user"],
+            "sortKey": "updated_at",
+            "sortDirection": "desc",
+        }
+        if search_term:
+            params["searchTerm"] = search_term
+        result = self.request("thread/list", params, timeout=30)
+        return result if isinstance(result, dict) else {}
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self.ws is not None:
+            try:
+                self.ws.close()
+            except Exception:
+                pass
+            return
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
