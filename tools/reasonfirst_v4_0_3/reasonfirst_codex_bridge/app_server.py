@@ -98,3 +98,53 @@ class AppServerClient:
         self.server_request_handler = server_request_handler
         self.request_timeout = request_timeout
         self.backend_name = backend_name
+        self._next_id = 1
+        self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
+        self._pending_lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._closed = False
+        self._stderr_tail: list[str] = []
+        self.proc: subprocess.Popen[str] | None = None
+        self.ws: Any = None
+
+        if unix_socket:
+            self._connect_unix_socket(unix_socket)
+            self._reader = threading.Thread(
+                target=self._read_ws_loop,
+                name="codex-app-server-ws-reader",
+                daemon=True,
+            )
+            self._stderr_reader = None
+            self._reader.start()
+        else:
+            argv = list(launch_argv or [self.codex_bin or resolve_codex_binary(), "app-server"])
+            try:
+                self.proc = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                )
+            except OSError as exc:
+                raise AppServerError(f"Failed to launch Codex app-server: {argv!r}: {exc}") from exc
+            if self.proc.stdin is None or self.proc.stdout is None or self.proc.stderr is None:
+                raise AppServerError("Failed to open codex app-server stdio pipes")
+            self._reader = threading.Thread(
+                target=self._read_stdio_loop,
+                name="codex-app-server-reader",
+                daemon=True,
+            )
+            self._stderr_reader = threading.Thread(
+                target=self._read_stderr,
+                name="codex-app-server-stderr",
+                daemon=True,
+            )
+            self._reader.start()
+            self._stderr_reader.start()
+        self._initialize()
+
+    @classmethod
+    def global_config_local(
+        cls,
