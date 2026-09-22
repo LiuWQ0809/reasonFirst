@@ -398,3 +398,53 @@ base={base}
 git -C "$wt" diff --no-ext-diff "$base" --
 printf '\n__RF_UNTRACKED__\n'
 git -C "$wt" ls-files --others --exclude-standard
+"""
+        proc = self._ssh(cmd, timeout=120)
+        raw = proc.stdout
+        marker = "\n__RF_UNTRACKED__\n"
+        tracked, _, untracked_blob = raw.partition(marker)
+        untracked = [line for line in untracked_blob.splitlines() if line.strip()][:100]
+        text = tracked[:max_chars]
+        return {
+            "workspace_id": state["workspace_id"],
+            "base_sha": state["base_sha"],
+            "diff": text,
+            "truncated": len(tracked) > len(text),
+            "original_chars": len(tracked),
+            "untracked": untracked,
+        }
+
+    def snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Return an exact review digest for tracked and untracked workspace changes."""
+        script = r'''
+import hashlib, json, pathlib, subprocess, sys
+root=pathlib.Path(sys.argv[1]).resolve()
+def out(*args):
+    return subprocess.check_output(list(args), cwd=str(root))
+head=out("git","rev-parse","HEAD").decode().strip()
+branch=out("git","branch","--show-current").decode().strip()
+diff=out("git","diff","--binary","HEAD","--")
+untracked=out("git","ls-files","--others","--exclude-standard","-z").split(b"\0")
+h=hashlib.sha256(); h.update(b"RFV4\\0"); h.update(head.encode()); h.update(b"\\0"); h.update(diff)
+paths=[]
+for raw in sorted(x for x in untracked if x):
+    rel=raw.decode("utf-8",errors="surrogateescape")
+    p=(root/rel).resolve(); p.relative_to(root)
+    if not p.is_file(): continue
+    data=p.read_bytes()
+    h.update(b"\\0U\\0"); h.update(raw); h.update(b"\\0"); h.update(hashlib.sha256(data).digest())
+    paths.append(rel)
+tracked=out("git","diff","--name-only","HEAD","--").decode("utf-8",errors="replace").splitlines()
+print(json.dumps({"head":head,"branch":branch,"digest":h.hexdigest(),"dirty":bool(diff or paths),"changed_paths":tracked+paths,"untracked":paths}))
+'''
+        cmd = "python3 -c {} {}".format(
+            shlex.quote(script), shlex.quote(str(state["worktree_path"])),
+        )
+        proc = self._ssh(cmd, timeout=60)
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
+    @staticmethod
+    def _push_path_block_reason(paths: list[str]) -> str | None:
+        blocked_names = {
+            ".env", ".env.local", ".env.production", "id_rsa", "id_ed25519",
+            "credentials", "credentials.json", "secrets.json",
