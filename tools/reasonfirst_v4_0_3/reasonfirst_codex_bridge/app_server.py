@@ -448,3 +448,53 @@ class AppServerClient:
             except queue.Empty as exc:
                 raise AppServerError(f"Timed out waiting for app-server method {method}") from exc
         finally:
+            with self._pending_lock:
+                self._pending.pop(rid, None)
+        if "error" in msg:
+            detail = msg["error"]
+            if isinstance(detail, dict) and detail.get("code") == -32099:
+                raise AppServerError(
+                    f"app-server exited while handling {method}; backend={self.backend_name}; "
+                    f"stderr_tail={detail.get('stderr_tail') or self._stderr_tail[-5:]}"
+                )
+            raise AppServerError(f"app-server {method} failed: {detail}")
+        return msg.get("result")
+
+    def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        self._write({"method": method, "params": params or {}})
+
+    def _initialize(self) -> None:
+        self.request(
+            "initialize",
+            {
+                "clientInfo": {
+                    "name": "reasonfirst_codex_web_bridge",
+                    "title": "ReasonFirst Codex Web Bridge",
+                    "version": "3.0.4",
+                },
+                "capabilities": {"experimentalApi": True},
+            },
+            timeout=30,
+        )
+        self.notify("initialized", {})
+
+    def admin_requirements(self) -> dict[str, Any]:
+        try:
+            result = self.request("configRequirements/read", {}, timeout=15)
+        except AppServerError:
+            return {}
+        return result if isinstance(result, dict) else {}
+
+    def assert_noninteractive_policy_allowed(self, *, sandbox_mode: str = "workspace-write") -> None:
+        data = self.admin_requirements()
+        req = data.get("requirements") if isinstance(data, dict) else None
+        if not isinstance(req, dict):
+            return
+        allowed = req.get("allowedApprovalPolicies")
+        if isinstance(allowed, list) and allowed and "never" not in allowed:
+            raise AppServerError(
+                "Codex admin requirements do not allow approvalPolicy=never. "
+                "This bridge fails closed instead of auto-approving requests."
+            )
+        sandbox_modes = req.get("allowedSandboxModes")
+        if isinstance(sandbox_modes, list) and sandbox_modes:
