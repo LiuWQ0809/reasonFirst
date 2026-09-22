@@ -498,3 +498,53 @@ class BridgeController:
             "codex_bin": resolve_codex_binary(),
             "managed_socket": str(managed_app_server_socket()),
             "managed_socket_exists": managed_app_server_socket().exists(),
+            "desktop_preferred": target.codex_backend in {"desktop-preferred", "desktop-required"},
+        }
+
+    def parse_gitlab_url(self, gitlab_url: str) -> dict[str, str]:
+        raw = str(gitlab_url).strip()
+        cfg = self._reasonfirst_config(); base = str(cfg.get("gitlab_base_url") or "").rstrip("/")
+        target = urlparse(raw); base_parts = urlparse(base)
+        if target.scheme not in {"http", "https"} or target.netloc.lower() != base_parts.netloc.lower():
+            raise BridgeError(f"GitLab URL host does not match configured instance: {base}")
+        path = unquote(target.path).strip("/"); base_path = unquote(base_parts.path).strip("/")
+        if base_path:
+            if path == base_path: path = ""
+            elif path.startswith(base_path + "/"): path = path[len(base_path)+1:]
+            else: raise BridgeError("GitLab URL path is outside configured base path")
+        project_part = path.split("/-/", 1)[0].rstrip("/")
+        if project_part.endswith(".git"): project_part = project_part[:-4]
+        if "/" not in project_part: raise BridgeError("GitLab URL must include namespace/project")
+        hinted_path = ""
+        if "/-/" in path:
+            suffix = path.split("/-/",1)[1]; pieces = suffix.split("/")
+            if pieces and pieces[0] in {"tree","blob"} and len(pieces)>=3:
+                hinted_path = "/".join(pieces[2:]).strip("/")
+        return {"project": project_part, "hinted_path": hinted_path, "gitlab_url": raw}
+
+    def dispatch_request(self, *, gitlab_url: str, module: str = "", request: str = "", intent: str = "analyze-optimize", base_ref: str = "", execution: Any = None) -> dict[str, Any]:
+        parsed = self.parse_gitlab_url(gitlab_url)
+        focus = str(module or parsed.get("hinted_path") or ".").strip() or "."
+        task = re.sub(r"[^a-zA-Z0-9._-]+", "-", f"{intent}-{focus}").strip("-._")[:48] or "chatgpt-analysis"
+        target = resolve_target(execution, config=self.bridge_config)
+        goal = f"Prepare the real repository for ChatGPT analysis. Do not modify files. User request: {request or intent}. Focus: {focus}."
+        prepared = self.prepare(project=parsed["project"], task=task, goal=goal, base_ref=base_ref, execution=target.to_dict())
+        record = self._workspace_record(str(prepared["workspace_id"])); record.update({"focus": focus, "request": request, "intent": intent, "gitlab_url": gitlab_url, "updated_at": int(time.time())}); self._save_state()
+        try: listing = self.files(workspace_id=str(prepared["workspace_id"]), path=focus, max_entries=120)
+        except Exception as exc: listing = {"ok": False, "error": redact(str(exc),1200), "path": focus}
+        return {"ok": True, "auto_routed": True, "workflow": "chatgpt-first-v4-mcp", "project": parsed["project"], "focus": focus, "workspace_id": prepared["workspace_id"], "worktree_path": prepared["worktree_path"], "execution": target.to_dict(), "initial_listing": listing, "next": ["ChatGPT reads files and forms a plan.", "Call start_codex only after plan/acceptance criteria are reviewed.", "Use review_bundle after Codex tests."]}
+
+    def project_preflight(self, project: str, *, ref: str = "") -> dict[str, Any]:
+        if self._git_only_mode():
+            argv = _module_command("gitlab_agent.actual_coder_cli", "project-config", project, "--validate")
+            if ref: argv += ["--ref", ref]
+            report = _run_json(argv, timeout=180)
+            return {"ok": True, "mode": "git-only", "project": project, "project_config": report}
+        argv = _module_command("gitlab_agent.project_access", project)
+        if ref: argv += ["--ref", ref]
+        report = _run_json(argv, timeout=60, allow_failure_json=True)
+        if not bool(report.get("ok")): raise BridgeError(f"Project access preflight failed: {report}")
+        return report
+
+    def prepare(self, *, project: str, task: str = "chatgpt-analysis", goal: str = "Prepare repository for ChatGPT analysis only; do not modify files.", base_ref: str = "", execution: Any = None) -> dict[str, Any]:
+        target = resolve_target(execution, config=self.bridge_config)
