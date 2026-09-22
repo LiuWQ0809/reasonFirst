@@ -348,3 +348,53 @@ class AppServerClient:
                 self._reject_server_request(msg)
                 return
             result = self.server_request_handler(msg)
+            if not isinstance(result, dict):
+                result = {"contentItems": [{"type": "inputText", "text": str(result)}], "success": True}
+            self._write({"id": rid, "result": result})
+        except Exception as exc:
+            try:
+                self._write({
+                    "id": rid,
+                    "result": {
+                        "contentItems": [{"type": "inputText", "text": f"ReasonFirst tool error: {type(exc).__name__}: {str(exc)[:2000]}"}],
+                        "success": False,
+                    },
+                })
+            except Exception:
+                pass
+
+    def _handle_message(self, msg: Any) -> None:
+        if not isinstance(msg, dict):
+            return
+        rid = msg.get("id")
+        method = msg.get("method")
+        if isinstance(rid, int) and isinstance(method, str):
+            if method == "item/tool/call" and self.server_request_handler is not None:
+                threading.Thread(
+                    target=self._handle_server_request_async,
+                    args=(msg,),
+                    name="codex-dynamic-tool",
+                    daemon=True,
+                ).start()
+            else:
+                self._reject_server_request(msg)
+            return
+        if isinstance(rid, int):
+            with self._pending_lock:
+                waiter = self._pending.get(rid)
+            if waiter is not None:
+                waiter.put(msg)
+            return
+        if isinstance(method, str):
+            self._emit_event(msg)
+
+    def _mark_closed(self) -> None:
+        self._closed = True
+        error = {
+            "error": {
+                "code": -32099,
+                "message": "codex app-server exited",
+                "backend": self.backend_name,
+                "stderr_tail": self._stderr_tail[-5:],
+            }
+        }
