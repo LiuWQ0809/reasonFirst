@@ -348,3 +348,53 @@ def main() -> int:
             try:
                 comments = fetch_comments(args.repo, args.issue)
             except BridgeError as exc:
+                print(
+                    "[reasonfirst] GitHub control poll failed after retries; "
+                    f"keeping relay alive: {redact(str(exc), 1000)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if args.once:
+                    raise
+                time.sleep(max(2.0, args.poll_seconds))
+                continue
+            for comment in comments:
+                if not isinstance(comment, dict):
+                    continue
+                cid = int(comment.get("id") or 0)
+                if cid <= last_id:
+                    continue
+                last_id = max(last_id, cid)
+                user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+                if user.get("login") != args.author:
+                    continue
+                body = str(comment.get("body") or "")
+                if not body.startswith(PREFIX):
+                    continue
+                raw = body[len(PREFIX):].strip()
+                try:
+                    command = json.loads(raw)
+                    if not isinstance(command, dict):
+                        raise ValueError("command must be a JSON object")
+                    result = call_local(command, control_repo=args.repo)
+                    post_result(args.repo, args.issue, cid, {"ok": bool(result.get("ok", True)), "result": result})
+                except Exception as exc:
+                    post_result(args.repo, args.issue, cid, {"ok": False, "error": redact(str(exc), 4000)})
+                state_path.write_text(json.dumps({"last_comment_id": last_id}), encoding="utf-8")
+                try:
+                    state_path.chmod(0o600)
+                except OSError:
+                    pass
+            state_path.write_text(json.dumps({"last_comment_id": last_id}), encoding="utf-8")
+            try:
+                state_path.chmod(0o600)
+            except OSError:
+                pass
+            if args.once:
+                break
+            time.sleep(max(2.0, args.poll_seconds))
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
