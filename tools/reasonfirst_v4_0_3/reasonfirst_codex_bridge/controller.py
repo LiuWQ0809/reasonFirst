@@ -248,3 +248,53 @@ class BridgeController:
                 event_handler=handler,
                 server_request_handler=request_handler,
                 backend_name="standalone-local",
+            )
+        else:
+            # v3 compatibility. Prefer v4 dedicated global-config app-server.
+            app = AppServerClient.global_config_local(
+                event_handler=handler, server_request_handler=request_handler
+            )
+        self._apps[key] = app
+        return key, app
+
+    def _proxy_workspace(self, workspace_id: str, rec: dict[str, Any]) -> str:
+        root = self.state_dir / "proxy" / workspace_id
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            root.chmod(0o700)
+        except OSError:
+            pass
+        note = root / "REMOTE_WORKSPACE.md"
+        note.write_text(
+            "# ReasonFirst remote workspace proxy\n\n"
+            "This local directory is a control surface only. The source of truth is remote.\n\n"
+            f"Project: {rec.get('project')}\n"
+            f"Remote host: {(rec.get('target') or {}).get('host')}\n"
+            f"Remote worktree: {rec.get('worktree_path')}\n"
+            f"Branch: {rec.get('branch')}\n"
+            f"Base SHA: {rec.get('base_sha')}\n\n"
+            "Use the ReasonFirst remote dynamic tools for all source reads, writes, commands and diffs.\n",
+            encoding="utf-8",
+        )
+        return str(root.resolve())
+
+    @staticmethod
+    def _remote_dynamic_tools() -> list[dict[str, Any]]:
+        def fn(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+            schema: dict[str, Any] = {
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": False,
+            }
+            if required:
+                schema["required"] = required
+            return {
+                "type": "function",
+                "name": name,
+                "description": description,
+                "inputSchema": schema,
+            }
+        return [{
+            "type": "namespace",
+            "name": "reasonfirst_remote",
+            "description": "Operate only on the managed remote ReasonFirst worktree selected for this task.",
