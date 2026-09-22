@@ -48,3 +48,46 @@ if [ -n "$PROJECT" ]; then
     *) echo "Project must be group/project, or leave blank for all accessible projects" >&2; exit 1 ;;
   esac
   REQUIRE_ALLOWLIST=true
+else
+  REQUIRE_ALLOWLIST=false
+fi
+
+umask 077
+cat > "$CFG" <<EOF
+GITLAB_BASE_URL=${BASE_URL%/}
+GITLAB_TOKEN=
+GITLAB_GIT_PASSWORD=$PASSWORD
+GITLAB_GIT_TOKEN=
+GITLAB_GIT_USERNAME=$USERNAME
+GITLAB_ALLOWED_PROJECTS=$PROJECT
+GITLAB_VERIFY_SSL=true
+GITLAB_TRUST_ENV=false
+GITLAB_GIT_TRUST_ENV=false
+GITLAB_REQUIRE_WRITE_ALLOWLIST=$REQUIRE_ALLOWLIST
+GITLAB_WORKSPACE_ROOT=~/.local/share/chatgpt-gitlab-mcp
+GITLAB_BRANCH_PREFIX=chatgpt/
+GITLAB_DEFAULT_BASE_REF=main
+GITLAB_ALLOWED_EXECUTABLES=python,python3,pytest,uv,node,npm,pnpm,yarn,make,cmake,ninja,cargo,go,mvn,gradle
+GITLAB_COMMAND_TIMEOUT_SECONDS=300
+GITLAB_COMMAND_MAX_OUTPUT_BYTES=120000
+GITLAB_MAX_WRITE_FILE_BYTES=1000000
+EOF
+chmod 600 "$CFG"
+unset PASSWORD
+
+export GITLAB_AGENT_ENV_FILE="$CFG"
+export RF_GITLAB_AUTH_MODE=git-only
+cd "$RF_DIR"
+
+echo "== ReasonFirst offline doctor =="
+uv run actual-coder doctor --offline
+
+if [ -n "$PROJECT" ]; then
+  echo "== Git-only project check =="
+  uv run actual-coder project-config "$PROJECT" --validate
+  echo "Git-only mode ready for project: $PROJECT"
+else
+  echo "Git-only mode configured for all projects accessible to this GitLab account."
+fi
+
+echo "Configuration created: $CFG"
