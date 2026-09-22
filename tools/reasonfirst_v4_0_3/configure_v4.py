@@ -98,3 +98,23 @@ def main() -> int:
     targets = data.setdefault("targets", {})
     local = targets.setdefault("local", {})
     if not isinstance(local, dict):
+        ap.error("bridge.yaml targets.local must be an object")
+    local.update(type="local", codex_backend="global-config-local")
+    data.setdefault("mcp", {}).update(transport="streamable-http", host="127.0.0.1",
+                                      port=args.port, path="/mcp")
+    data.setdefault("audit", {}).setdefault("github_enabled", False)
+    new_bridge = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+    if not bridge.exists() or bridge.read_text(encoding="utf-8") != new_bridge:
+        backup(bridge, backups)
+        atomic_write(bridge, new_bridge)
+    if old != new_codex:
+        backup(codex, backups)
+        atomic_write(codex, new_codex)
+    print(f"ReasonFirst bridge: {bridge}")
+    print(f"Codex global MCP: {url}")
+    print(f"Backups: {backups}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
