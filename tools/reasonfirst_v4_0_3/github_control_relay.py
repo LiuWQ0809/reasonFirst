@@ -98,3 +98,53 @@ def gh_json(
         print(
             f"[reasonfirst] transient GitHub API error ({attempt}/{attempts}): "
             f"{redact(last_error, 500)}; retrying in {delay:g}s",
+            file=sys.stderr,
+            flush=True,
+        )
+        time.sleep(delay)
+
+    raise BridgeError(last_error or "gh api failed")
+
+
+def require_private_repo(repo: str) -> None:
+    data = gh_json([f"repos/{repo}"])
+    if not isinstance(data, dict):
+        raise BridgeError("Could not inspect GitHub control repository")
+    if not bool(data.get("private")) and os.getenv("RF_CONTROL_ALLOW_PUBLIC", "false").lower() not in {"1", "true", "yes", "on"}:
+        raise BridgeError("Control repository must be private. Refusing to use a public issue as a command queue.")
+
+
+def fetch_comments(repo: str, issue: int) -> list[dict[str, Any]]:
+    data = gh_json([f"repos/{repo}/issues/{issue}/comments?per_page=100", "--paginate", "--slurp"])
+    pages = data if isinstance(data, list) else []
+    if pages and all(isinstance(item, dict) for item in pages):
+        # Older gh builds may ignore --slurp when only one page exists.
+        return [item for item in pages if isinstance(item, dict)]
+    out: list[dict[str, Any]] = []
+    for page in pages:
+        if isinstance(page, list):
+            out.extend(item for item in page if isinstance(item, dict))
+    return out
+
+
+def post_result(repo: str, issue: int, command_comment_id: int, result: dict[str, Any]) -> None:
+    payload = {"command_comment_id": command_comment_id, **result}
+    body = RESULT_PREFIX + "\n" + json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    # Never cut raw JSON/base64 in the middle. If a caller exceeds the transport
+    # budget, return a valid compact response and ask ChatGPT to request smaller
+    # line ranges / fewer artifacts instead.
+    if len(body) > 50000:
+        compact = {
+            "command_comment_id": command_comment_id,
+            "ok": False,
+            "error": "result_exceeds_control_comment_budget",
+            "message": "Result exceeded 50k characters. Request a smaller read/diff range or fewer artifacts/previews.",
+            "original_chars": len(body),
+        }
+        body = RESULT_PREFIX + "\n" + json.dumps(compact, ensure_ascii=False, indent=2)
+    gh_json([f"repos/{repo}/issues/{issue}/comments"], input_obj={"body": body})
+
+
+def publish_artifact(repo: str, ctrl: BridgeController, command: dict[str, Any]) -> dict[str, Any]:
+    descriptor = ctrl.artifact_descriptor(
+        workspace_id=str(command.get("workspace_id") or ""),
