@@ -148,3 +148,53 @@ class AppServerClient:
     @classmethod
     def global_config_local(
         cls,
+        *,
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+        server_request_handler: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> "AppServerClient":
+        """Launch a dedicated local app-server using the user's normal Codex config.
+
+        v4 intentionally does not attach the execution backend to the ChatGPT
+        Desktop managed socket. ChatGPT chat remains the planner/orchestrator,
+        while a dedicated Codex app-server performs implementation/testing.
+
+        The only one-shot config override disables the ReasonFirst MCP server in
+        this child process to prevent recursive self-invocation. All other global
+        config (model/provider, skills, rules, other MCP servers, login state,
+        approval/sandbox defaults, project config) remains inherited normally.
+        """
+        codex_bin = resolve_desktop_or_codex_binary()
+        argv = [
+            codex_bin,
+            "--config",
+            "mcp_servers.reasonfirst.enabled=false",
+            "app-server",
+        ]
+        return cls(
+            launch_argv=argv,
+            backend_name="global-config-local",
+            event_handler=event_handler,
+            server_request_handler=server_request_handler,
+        )
+
+    @classmethod
+    def desktop_preferred(
+        cls,
+        *,
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+        server_request_handler: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        required: bool = False,
+    ) -> "AppServerClient":
+        sock = managed_app_server_socket()
+        if sock.exists():
+            try:
+                return cls(
+                    unix_socket=str(sock),
+                    backend_name="desktop-managed",
+                    event_handler=event_handler,
+                    server_request_handler=server_request_handler,
+                )
+            except Exception as exc:
+                if required:
+                    raise AppServerError(
+                        f"Managed Desktop app-server socket exists but could not be used: {sock}: {exc}"
