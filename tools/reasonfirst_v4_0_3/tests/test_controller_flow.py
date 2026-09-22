@@ -48,3 +48,53 @@ class FakeApp:
 
     def set_thread_goal(self, thread_id, objective):
         self.goal = objective
+        return {"goal": {"objective": objective}}
+
+    def update_thread_metadata(self, thread_id, **kwargs):
+        self.metadata = kwargs
+        return {"thread": {"id": thread_id, **kwargs}}
+
+    def list_threads(self, **kwargs):
+        return {"data": [{"id": "thr_test", "name": self.name}]}
+
+    def resume_thread(self, thread_id):
+        return None
+
+    def read_thread(self, thread_id, include_turns=False):
+        return {"thread": {"id": thread_id, "name": self.name, "status": {"type": "idle"}}}
+
+    def close(self):
+        return None
+
+
+def main():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "workspace-root"
+        worktree = root / "worktrees" / "abc123def456"
+        (worktree / "src" / "perception").mkdir(parents=True)
+        (worktree / "src" / "perception" / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (worktree / "reports").mkdir()
+        (worktree / "reports" / "metrics.json").write_text(json.dumps({"latency_ms": 12.3, "accuracy": 0.91}), encoding="utf-8")
+        state = Path(tmp) / "bridge-state"
+        os.environ["RF_CODEX_BRIDGE_STATE_DIR"] = str(state)
+
+        original_app = controller.AppServerClient
+        original_run = controller._run_json
+        controller.AppServerClient = FakeApp
+
+        def fake_run(argv, **kwargs):
+            args = list(argv)
+            if args[-1] == "config":
+                return {
+                    "workspace_root": str(root),
+                    "api_token_set": False,
+                    "git_token_set": True,
+                    "gitlab_base_url": "https://gitlab.example.com",
+                }
+            if "project-config" in args:
+                return {"project": "group/project", "found": False, "valid": True}
+            if "start" in args:
+                return {
+                    "workspace": {"workspace_id": "abc123def456", "project": "group/project"},
+                    "worktree_path": str(worktree),
+                    "agent_prompt": "unused until start_codex",
