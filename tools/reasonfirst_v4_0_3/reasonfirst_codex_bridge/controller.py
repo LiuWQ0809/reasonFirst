@@ -598,3 +598,53 @@ class BridgeController:
         content = str(result.get("content") or ""); lines = content.splitlines(); start=max(1,int(start_line)); end=int(end_line) if int(end_line)>0 else len(lines); end=max(start,min(end,len(lines))) if lines else 0
         numbered="\n".join(f"{idx}: {line}" for idx,line in enumerate(lines[start-1:end] if lines else [], start=start)); cap=max(1000,min(int(max_chars),40000)); clipped=redact(numbered,cap)
         return {"ok": True, "workspace_id": wid, "path": path, "total_lines": len(lines), "start_line": start if lines else 0, "end_line": end, "truncated": bool(result.get("truncated")) or len(numbered)>len(clipped), "content": clipped}
+
+    def diff(self, *, workspace_id: str = "", thread_id: str = "") -> dict[str, Any]:
+        wid=self._workspace_id(workspace_id=workspace_id, thread_id=thread_id); rec=self._workspace_record(wid)
+        if rec.get("kind") == "ssh":
+            target=self._target_from_dict(rec["target"]); result=self._remote_manager(target).diff(rec)
+        else: result=_run_json(_module_command("gitlab_agent.actual_coder_cli","diff",wid),timeout=120)
+        text=redact(str(result.get("diff") or ""),36000)
+        return {"ok": True, "workspace_id": wid, "base_sha": result.get("base_sha") or rec.get("base_sha"), "truncated": bool(result.get("truncated")) or len(str(result.get("diff") or ""))>len(text), "diff": text, "untracked": result.get("untracked", [])}
+
+    def _origin_url(self, project: str) -> str:
+        cfg=self._reasonfirst_config(); return str(cfg.get("gitlab_base_url") or "").rstrip("/")+"/"+project+".git"
+
+    def _decorate_thread(self, *, app: AppServerClient, thread_id: str, workspace: dict[str, Any], project: str, task: str, goal: str) -> dict[str, Any]:
+        name=f"[ReasonFirst] {project} - {task}"[:200]; errors=[]
+        try: app.set_thread_name(thread_id,name)
+        except Exception as exc: errors.append(f"name:{exc}")
+        try: app.set_thread_goal(thread_id,goal)
+        except Exception as exc: errors.append(f"goal:{exc}")
+        try: app.update_thread_metadata(thread_id,branch=str(workspace.get("branch") or ""),sha=str(workspace.get("head") or workspace.get("base_sha") or ""),origin_url=str(workspace.get("origin_url") or self._origin_url(project)),is_pinned=True)
+        except Exception as exc: errors.append(f"metadata:{exc}")
+        return {"name": name, "errors": errors}
+
+    def _remote_prompt(self, rec: dict[str, Any], goal: str) -> str:
+        return (
+            "You are the Codex execution backend controlled by ReasonFirst v4. ChatGPT has already chosen the plan; implement it faithfully.\n"
+            "You are running on the selected SSH execution target, inside an isolated Git worktree.\n\n"
+            f"Project: {rec.get('project')}\nBase ref: {rec.get('base_ref')}\nBase SHA: {rec.get('base_sha')}\n"
+            f"Feature branch: {rec.get('branch')}\nWorkspace: {rec.get('worktree_path')}\nGoal: {goal}\n\n"
+            "Rules:\n- Work only inside the worktree above.\n- Do not modify the user's original checkout.\n"
+            "- Do not push or force-push unless ReasonFirst explicitly instructs it.\n"
+            "- Inspect relevant code before editing.\n- Run relevant build/tests on this same target and report exact commands, exit codes and failures.\n"
+            "- Keep changes scoped to the reviewed ChatGPT plan and acceptance criteria.\n"
+        )
+
+    def _hybrid_remote_prompt(self, rec: dict[str, Any], goal: str) -> str:
+        return (
+            "You are Codex running locally on the user's Mac as the implementation/test backend for ReasonFirst v4. ChatGPT is the planner/reviewer; do not redesign the task.\n"
+            "The authoritative source tree is NOT local. It is the managed SSH worktree below.\n"
+            "Use the reasonfirst_remote dynamic tools for ALL source reads, edits, diffs, builds and tests.\n"
+            "Do not copy the repository into this local proxy directory and do not treat local proxy files as source.\n\n"
+            f"Project: {rec.get('project')}\nRemote host: {(rec.get('target') or {}).get('host')}\n"
+            f"Remote worktree: {rec.get('worktree_path')}\nBase ref: {rec.get('base_ref')}\n"
+            f"Base SHA: {rec.get('base_sha')}\nFeature branch: {rec.get('branch')}\nGoal: {goal}\n\n"
+            "Rules:\n"
+            "- Keep every change inside the managed remote worktree.\n"
+            "- Do not modify the user's original remote checkout.\n"
+            "- Do not push, merge, deploy, reset --hard, clean, stash, sudo, or open nested SSH sessions.\n"
+            "- Inspect the real remote code before editing.\n"
+            "- Use reasonfirst_remote.write or apply_patch for edits.\n"
+            "- Use reasonfirst_remote.run for build/tests and report exact commands and exit codes.\n"
