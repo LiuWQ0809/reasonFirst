@@ -148,3 +148,53 @@ def post_result(repo: str, issue: int, command_comment_id: int, result: dict[str
 def publish_artifact(repo: str, ctrl: BridgeController, command: dict[str, Any]) -> dict[str, Any]:
     descriptor = ctrl.artifact_descriptor(
         workspace_id=str(command.get("workspace_id") or ""),
+        thread_id=str(command.get("thread_id") or ""),
+        path=str(command["path"]),
+        max_bytes=int(command.get("max_bytes") or 8 * 1024 * 1024),
+    )
+    if descriptor.get("remote"):
+        payload = str(descriptor.pop("base64"))
+        safe_name = Path(str(descriptor.get("path") or "artifact.bin")).name.replace("/", "_")
+    else:
+        source = Path(str(descriptor.pop("absolute_path")))
+        raw = source.read_bytes()
+        payload = base64.b64encode(raw).decode("ascii")
+        safe_name = source.name.replace("/", "_")
+    stamp = int(time.time())
+    dest = f"artifacts/{descriptor['workspace_id']}/{stamp}-{safe_name}"
+    data = gh_json(
+        [f"repos/{repo}/contents/{quote(dest, safe='/')}", "--method", "PUT"],
+        input_obj={
+            "message": f"artifact: {descriptor['workspace_id']} {safe_name}",
+            "content": payload,
+        },
+    )
+    content = data.get("content") if isinstance(data, dict) and isinstance(data.get("content"), dict) else {}
+    return {
+        "ok": True,
+        "artifact": descriptor,
+        "published": {
+            "repository": repo,
+            "path": dest,
+            "sha": content.get("sha"),
+            "html_url": content.get("html_url"),
+            "download_url": content.get("download_url"),
+        },
+        "note": "Published to the private control repository. ChatGPT can retrieve text/base64 through the GitHub connector; visual previews are also available via the artifacts op.",
+    }
+
+
+def dispatch(ctrl: BridgeController, command: dict[str, Any], *, control_repo: str = "") -> dict[str, Any]:
+    op = command.get("op")
+    if op == "doctor":
+        return ctrl.doctor()
+    if op == "target_probe":
+        return ctrl.target_probe(command.get("execution"))
+    if op == "dispatch":
+        return ctrl.dispatch_request(
+            gitlab_url=str(command["gitlab_url"]),
+            module=str(command.get("module") or ""),
+            request=str(command.get("request") or ""),
+            intent=str(command.get("intent") or "analyze-optimize"),
+            base_ref=str(command.get("base_ref") or ""),
+            execution=command.get("execution"),
