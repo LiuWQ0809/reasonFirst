@@ -198,3 +198,53 @@ class AppServerClient:
                 if required:
                     raise AppServerError(
                         f"Managed Desktop app-server socket exists but could not be used: {sock}: {exc}"
+                    ) from exc
+        if required:
+            raise AppServerError(
+                f"Managed Desktop app-server is unavailable at {sock}. "
+                "Start/enable ChatGPT/Codex Desktop remote control or use desktop-preferred mode."
+            )
+        desktop_candidates = [
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
+            str(Path.home() / "Applications/ChatGPT.app/Contents/Resources/codex"),
+            str(Path.home() / "Applications/Codex.app/Contents/Resources/codex"),
+        ]
+        for candidate in desktop_candidates:
+            path = Path(candidate).expanduser()
+            if path.is_file() and os.access(path, os.X_OK):
+                return cls(
+                    codex_bin=str(path.resolve()),
+                    backend_name="desktop-bundled",
+                    event_handler=event_handler,
+                    server_request_handler=server_request_handler,
+                )
+        return cls(event_handler=event_handler, server_request_handler=server_request_handler, backend_name="standalone-local")
+
+    @classmethod
+    def remote_ssh(
+        cls,
+        host: str,
+        *,
+        remote_codex: str = "codex",
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+        server_request_handler: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        connect_timeout: int = 8,
+    ) -> "AppServerClient":
+        host = str(host).strip()
+        if not host or host.startswith("-"):
+            raise AppServerError("Invalid SSH host")
+        remote_codex = str(remote_codex).strip() or "codex"
+        if any(ch.isspace() for ch in remote_codex):
+            raise AppServerError("remote_codex must be a single executable name/path")
+        remote_command = "sh -lc " + shlex.quote(
+            "exec " + shlex.quote(remote_codex) + " app-server"
+        )
+        argv = [
+            "ssh",
+            "-T",
+            "-o", "BatchMode=yes",
+            "-o", f"ConnectTimeout={max(1, min(int(connect_timeout), 30))}",
+            "--",
+            host,
+            remote_command,
