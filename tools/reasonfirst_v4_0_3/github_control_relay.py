@@ -298,3 +298,53 @@ def call_local(command: dict[str, Any], *, control_repo: str = "") -> dict[str, 
     try:
         with urlopen(request, timeout=900) as response:
             result = json.load(response)
+    except HTTPError as exc:
+        try:
+            result = json.loads(exc.read())
+        except (ValueError, OSError):
+            raise BridgeError(f"Local MCP control returned HTTP {exc.code}") from exc
+    if not isinstance(result, dict):
+        raise BridgeError("Local MCP control returned invalid JSON")
+    return result
+
+
+def main() -> int:
+    bridge_cfg = load_bridge_config()
+    control = bridge_cfg.get("control") if isinstance(bridge_cfg.get("control"), dict) else {}
+    parser = argparse.ArgumentParser(description="ReasonFirst v3 relay: ChatGPT Web -> desktop-preferred/local/SSH Codex execution")
+    parser.add_argument("--repo", default=os.getenv("RF_CONTROL_REPO", str(control.get("repo") or "")))
+    parser.add_argument("--issue", type=int, default=int(os.getenv("RF_CONTROL_ISSUE", str(control.get("issue") or 0)) or 0))
+    parser.add_argument("--author", default=os.getenv("RF_CONTROL_ALLOWED_AUTHOR", str(control.get("author") or "")))
+    parser.add_argument("--poll-seconds", type=float, default=float(os.getenv("RF_CONTROL_POLL_SECONDS", str(control.get("poll_seconds") or 5))))
+    parser.add_argument("--once", action="store_true")
+    parser.add_argument("--doctor", action="store_true")
+    args = parser.parse_args()
+    if not args.repo or args.issue <= 0 or not args.author:
+        parser.error("--repo, --issue and --author (or RF_CONTROL_* env vars) are required")
+    require_private_repo(args.repo)
+    if args.doctor:
+        print(json.dumps(call_local({"op": "doctor"}), indent=2, ensure_ascii=False))
+        return 0
+    state_path = Path(os.getenv("RF_CODEX_BRIDGE_STATE_DIR", "~/.local/share/reasonfirst/codex-web-bridge")).expanduser() / "github-relay.json"
+    last_id = 0
+    if state_path.exists():
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+            last_id = int(data.get("last_comment_id", 0))
+        except Exception:
+            pass
+    else:
+        # Fail safe on first start: do not replay a historical command queue.
+        # Start watching from the newest comment already present.
+        existing = fetch_comments(args.repo, args.issue)
+        last_id = max((int(c.get("id") or 0) for c in existing), default=0)
+        state_path.write_text(json.dumps({"last_comment_id": last_id}), encoding="utf-8")
+        try:
+            state_path.chmod(0o600)
+        except OSError:
+            pass
+    try:
+        while True:
+            try:
+                comments = fetch_comments(args.repo, args.issue)
+            except BridgeError as exc:
