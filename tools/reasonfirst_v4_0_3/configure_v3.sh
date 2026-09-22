@@ -48,3 +48,44 @@ else
   fi
 
   printf 'Local Codex backend [desktop-preferred] (desktop-preferred/desktop-required/standalone-local): '
+  IFS= read -r backend
+  backend="${backend:-desktop-preferred}"
+fi
+
+case "$backend" in
+  desktop-preferred|desktop-required|standalone-local) ;;
+  *) echo "Unsupported backend: $backend" >&2; exit 2 ;;
+esac
+
+case "$issue" in
+  ''|*[!0-9]*) echo "Control issue must be a positive integer" >&2; exit 2 ;;
+esac
+if [ "$issue" -le 0 ]; then
+  echo "Control issue must be a positive integer" >&2
+  exit 2
+fi
+
+cat > "$CONFIG" <<EOF
+version: 3
+control:
+  repo: "$repo"
+  issue: $issue
+  author: "$author"
+  poll_seconds: 5
+defaults:
+  target: local
+  codex_backend: "$backend"
+targets:
+  local:
+    type: local
+    codex_backend: "$backend"
+EOF
+chmod 600 "$CONFIG"
+
+cat <<EOF
+Saved: $CONFIG
+Control repo: $repo
+Control issue: $issue
+Authorized author: $author
+Local backend: $backend
+EOF
