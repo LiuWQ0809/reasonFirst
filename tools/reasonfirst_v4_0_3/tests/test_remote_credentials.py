@@ -48,3 +48,16 @@ def main() -> None:
     assert any("GIT_ASKPASS" in cmd for cmd in mgr.commands)
     assert "secret-value" not in str(state)
 
+    other = FakeRemoteManager(origin="https://evil.example/example/project.git")
+    try:
+        other.create_workspace(project="example/project", base_ref="main", task="test")
+    except RemoteWorkspaceError:
+        pass
+    else:
+        raise AssertionError("credential host guard did not fail closed")
+    assert not any("GIT_ASKPASS" in cmd for cmd in other.commands)
+    print("remote Git credential forwarding guard: OK")
+
+
+if __name__ == "__main__":
+    main()
