@@ -448,3 +448,53 @@ class BridgeController:
             "desktop_managed_socket_exists": managed_app_server_socket().exists(),
             "reasonfirst": {},
             "targets": {},
+        }
+        try: result["codex_bin"] = resolve_codex_binary()
+        except Exception as exc: result["ok"] = False; result["codex_error"] = str(exc)
+        try:
+            cfg = self._reasonfirst_config()
+            result["gitlab_auth_mode"] = "git-only" if not bool(cfg.get("api_token_set")) else "api+git"
+            result["git_credential_configured"] = bool(cfg.get("git_token_set"))
+            argv = _module_command("gitlab_agent.actual_coder_cli", "doctor", "--offline")
+            if self._git_only_mode(): argv.append("--git-only")
+            rf = _run_json(argv, timeout=60, allow_failure_json=True)
+            result["reasonfirst"] = rf
+            if not bool(rf.get("ok")): result["ok"] = False
+        except Exception as exc:
+            result["ok"] = False; result["reasonfirst_error"] = str(exc)
+        targets = self.bridge_config.get("targets", {})
+        if isinstance(targets, dict):
+            for name in targets:
+                try:
+                    target = resolve_target(name, config=self.bridge_config)
+                    if target.type == "ssh":
+                        result["targets"][name] = self._remote_manager(target).probe()
+                    else:
+                        result["targets"][name] = {"ok": True, "target": target.to_dict()}
+                except Exception as exc:
+                    result["targets"][name] = {"ok": False, "error": redact(str(exc), 2000)}
+        return result
+
+    def target_probe(self, execution: Any = None) -> dict[str, Any]:
+        target = resolve_target(execution, config=self.bridge_config)
+        if target.type == "ssh":
+            result = self._remote_manager(target).probe()
+            result["remote_codex_required"] = target.codex_backend == "remote-ssh"
+            result["codex_execution"] = (
+                "remote" if target.codex_backend == "remote-ssh" else "local-desktop-proxy"
+            )
+            if target.codex_backend != "remote-ssh":
+                try:
+                    result["local_codex_bin"] = resolve_codex_binary()
+                except Exception as exc:
+                    result["local_codex_error"] = str(exc)
+                    result["ok"] = False
+                result["managed_socket"] = str(managed_app_server_socket())
+                result["managed_socket_exists"] = managed_app_server_socket().exists()
+            return result
+        return {
+            "ok": True,
+            "target": target.to_dict(),
+            "codex_bin": resolve_codex_binary(),
+            "managed_socket": str(managed_app_server_socket()),
+            "managed_socket_exists": managed_app_server_socket().exists(),
