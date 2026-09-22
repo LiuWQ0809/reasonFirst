@@ -548,3 +548,53 @@ class AppServerClient:
                 else {"type": "workspaceWrite", "writableRoots": [cwd], "networkAccess": bool(network_access)}
             ),
         }
+        result = self.request("turn/start", params, timeout=30)
+        turn = result.get("turn") if isinstance(result, dict) else None
+        turn_id = turn.get("id") if isinstance(turn, dict) else None
+        if not isinstance(turn_id, str) or not turn_id:
+            raise AppServerError("turn/start returned no turn id")
+        return turn_id
+
+    def steer(self, *, thread_id: str, turn_id: str, prompt: str) -> str:
+        result = self.request(
+            "turn/steer",
+            {
+                "threadId": thread_id,
+                "input": [{"type": "text", "text": prompt}],
+                "expectedTurnId": turn_id,
+            },
+            timeout=30,
+        )
+        accepted = result.get("turnId") if isinstance(result, dict) else None
+        return str(accepted or turn_id)
+
+    def interrupt(self, *, thread_id: str, turn_id: str) -> None:
+        self.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}, timeout=30)
+
+    def read_thread(self, thread_id: str, *, include_turns: bool = False) -> dict[str, Any]:
+        result = self.request(
+            "thread/read",
+            {"threadId": thread_id, "includeTurns": bool(include_turns)},
+            timeout=30,
+        )
+        return result if isinstance(result, dict) else {}
+
+    def set_thread_name(self, thread_id: str, name: str) -> None:
+        value = str(name).strip()[:200]
+        if value:
+            self.request("thread/name/set", {"threadId": thread_id, "name": value}, timeout=30)
+
+    def set_thread_goal(self, thread_id: str, objective: str) -> dict[str, Any]:
+        value = str(objective).strip()[:4000]
+        if not value:
+            return {}
+        result = self.request(
+            "thread/goal/set",
+            {"threadId": thread_id, "objective": value, "status": "active"},
+            timeout=30,
+        )
+        return result if isinstance(result, dict) else {}
+
+    def update_thread_metadata(
+        self,
+        thread_id: str,
