@@ -248,3 +248,53 @@ elif target.is_dir():
 else:
     raise SystemExit("path does not exist")
 print(json.dumps({"path":rel,"items":items,"truncated":len(items)>=limit}))
+'''
+        cmd = "python3 -c {} {} {} {} {}".format(
+            shlex.quote(script), shlex.quote(str(state["worktree_path"])), shlex.quote(rel),
+            "1" if recursive else "0", max(1, min(int(max_entries), 500)),
+        )
+        proc = self._ssh(cmd, timeout=60)
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
+    def read_file(self, state: dict[str, Any], path: str, *, max_bytes: int = 2 * 1024 * 1024) -> dict[str, Any]:
+        rel = _safe_relative(path)
+        script = r'''
+import json, pathlib, sys
+root=pathlib.Path(sys.argv[1]).resolve(); rel=sys.argv[2]; cap=int(sys.argv[3])
+p=(root/rel).resolve(); p.relative_to(root)
+if not p.is_file(): raise SystemExit("not a file")
+raw=p.read_bytes()
+if len(raw)>cap: raw=raw[:cap]
+print(json.dumps({"path":rel,"content":raw.decode("utf-8",errors="replace"),"original_bytes":p.stat().st_size,"truncated":p.stat().st_size>cap}))
+'''
+        cmd = "python3 -c {} {} {} {}".format(
+            shlex.quote(script), shlex.quote(str(state["worktree_path"])), shlex.quote(rel), int(max_bytes),
+        )
+        proc = self._ssh(cmd, timeout=60)
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+    def write_file(self, state: dict[str, Any], path: str, content: str) -> dict[str, Any]:
+        rel = _safe_relative(path)
+        raw = str(content).encode("utf-8")
+        if len(raw) > 4 * 1024 * 1024:
+            raise RemoteWorkspaceError("write payload is too large")
+        import base64
+        payload = base64.b64encode(raw).decode("ascii")
+        script = r'''
+import base64, json, pathlib, sys
+root=pathlib.Path(sys.argv[1]).resolve(); rel=sys.argv[2]; data=sys.argv[3]
+p=(root/rel).resolve(); p.relative_to(root)
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_bytes(base64.b64decode(data.encode("ascii")))
+print(json.dumps({"path":rel,"bytes":p.stat().st_size}))
+'''
+        cmd = "python3 -c {} {} {} {}".format(
+            shlex.quote(script), shlex.quote(str(state["worktree_path"])), shlex.quote(rel), shlex.quote(payload),
+        )
+        proc = self._ssh(cmd, timeout=90)
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
+    def apply_patch(self, state: dict[str, Any], patch: str) -> dict[str, Any]:
+        raw = str(patch).encode("utf-8")
+        if len(raw) > 4 * 1024 * 1024:
