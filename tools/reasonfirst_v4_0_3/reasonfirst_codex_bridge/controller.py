@@ -398,3 +398,53 @@ class BridgeController:
             result = manager.diff(rec)
         else:
             raise BridgeError(f"Unknown ReasonFirst remote tool: {tool}")
+        text = redact(json.dumps(result, ensure_ascii=False, default=str), 50000)
+        return {"contentItems": [{"type": "inputText", "text": text}], "success": True}
+
+    def _app_for_session(self, session: dict[str, Any]) -> tuple[str, AppServerClient]:
+        target = self._target_from_dict(session.get("target") or "local")
+        key, app = self._get_app(target)
+        tid = str(session["thread_id"])
+        if key not in self._app_current_thread or self._app_current_thread.get(key) != tid:
+            try:
+                app.resume_thread(tid)
+            except Exception:
+                # The thread may already be loaded by this app-server. A read verifies it.
+                app.read_thread(tid, include_turns=False)
+            self._app_current_thread[key] = tid
+        return key, app
+
+    def _allowed_workspace_root(self) -> Path:
+        data = _run_json(_module_command("gitlab_agent.actual_coder_cli", "config"), timeout=60)
+        root = data.get("workspace_root")
+        if not isinstance(root, str) or not root:
+            raise BridgeError("actual-coder config returned no workspace_root")
+        return Path(root).expanduser().resolve()
+
+    def _assert_worktree_allowed(self, worktree: str) -> str:
+        path = Path(worktree).expanduser().resolve()
+        root = self._allowed_workspace_root()
+        try: path.relative_to(root)
+        except ValueError as exc: raise BridgeError(f"Worktree {path} is outside ReasonFirst workspace_root {root}") from exc
+        if not path.is_dir(): raise BridgeError(f"Worktree does not exist: {path}")
+        return str(path)
+
+    def _reasonfirst_config(self) -> dict[str, Any]:
+        return _run_json(_module_command("gitlab_agent.actual_coder_cli", "config"), timeout=60)
+
+    def _git_only_mode(self) -> bool:
+        forced = os.getenv("RF_GITLAB_AUTH_MODE", "").strip().lower()
+        if forced in {"git-only", "git_only", "password", "git"}: return True
+        if forced in {"api", "token", "full"}: return False
+        return not bool(self._reasonfirst_config().get("api_token_set"))
+
+    def doctor(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "ok": True,
+            "bridge_version": "4.0.3",
+            "config_file": str(config_path()),
+            "codex_bin": None,
+            "desktop_managed_socket": str(managed_app_server_socket()),
+            "desktop_managed_socket_exists": managed_app_server_socket().exists(),
+            "reasonfirst": {},
+            "targets": {},
