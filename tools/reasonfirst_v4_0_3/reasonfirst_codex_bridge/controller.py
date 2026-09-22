@@ -648,3 +648,53 @@ class BridgeController:
             "- Inspect the real remote code before editing.\n"
             "- Use reasonfirst_remote.write or apply_patch for edits.\n"
             "- Use reasonfirst_remote.run for build/tests and report exact commands and exit codes.\n"
+            "- Use reasonfirst_remote.diff before finishing.\n"
+            "- Keep changes scoped to the reviewed ChatGPT plan and acceptance criteria.\n"
+        )
+
+    def start_codex(self, *, workspace_id: str, goal: str) -> dict[str, Any]:
+        wid = self._workspace_id(workspace_id=workspace_id)
+        rec = self._workspace_record(wid)
+        target = self._target_from_dict(rec.get("target") or "local")
+        target, execution_migrated = self._migrate_legacy_remote_target_if_needed(wid, rec, target)
+        dynamic_tools: list[dict[str, Any]] | None = None
+        sandbox_mode = "workspace-write"
+        if rec.get("kind") == "ssh":
+            workspace = self._remote_manager(target).status(rec)
+            remote_worktree = str(rec["worktree_path"])
+            if self._is_remote_proxy_target(target):
+                prompt = self._hybrid_remote_prompt(rec, goal)
+                codex_cwd = self._proxy_workspace(wid, rec)
+                dynamic_tools = self._remote_dynamic_tools()
+                sandbox_mode = "read-only"
+            else:
+                prompt = self._remote_prompt(rec, goal)
+                codex_cwd = remote_worktree
+        else:
+            workspace = _run_json(_module_command("gitlab_agent.actual_coder_cli", "status", wid), timeout=60)
+            remote_worktree = self._assert_worktree_allowed(str(workspace.get("worktree_path") or ""))
+            codex_cwd = remote_worktree
+            handoff = _run_json(
+                _module_command("gitlab_agent.actual_coder_cli", "resume", wid, "--agent", "codex", "--goal", goal),
+                timeout=120,
+            )
+            prompt = str(handoff.get("agent_prompt") or "").strip()
+        app_key, app = self._get_app(target)
+        thread_id = app.start_thread(cwd=codex_cwd, dynamic_tools=dynamic_tools, sandbox_mode=sandbox_mode)
+        with self._lock:
+            self._state["sessions"][thread_id] = {
+                "thread_id": thread_id,
+                "workspace_id": wid,
+                "project": rec.get("project"),
+                "task": rec.get("task"),
+                "worktree_path": remote_worktree,
+                "codex_cwd": codex_cwd,
+                "target": target.to_dict(),
+                "app_key": app_key,
+                "last_turn_id": "",
+                "last_turn_status": "prepared",
+                "last_agent_message": "",
+                "events": [],
+                "created_at": int(time.time()),
+                "updated_at": int(time.time()),
+            }
