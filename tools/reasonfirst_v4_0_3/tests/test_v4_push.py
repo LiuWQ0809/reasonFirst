@@ -48,3 +48,9 @@ def main():
             branch=result['branch']
             sha=run('git','--git-dir',str(bare),'rev-parse',f'refs/heads/{branch}',capture=True).stdout.strip()
             assert sha==result['commit_sha']
+            assert mgr.status(ws)['dirty'] is False
+        finally:
+            os.environ.clear(); os.environ.update(old)
+    print('v4 reviewed snapshot commit/push gate: OK')
+
+if __name__=='__main__': main()
