@@ -298,3 +298,53 @@ class AppServerClient:
         if self._closed:
             return False
         if self.ws is not None:
+            return True
+        return self.proc is not None and self.proc.poll() is None
+
+    def _write(self, message: dict[str, Any]) -> None:
+        if not self._is_running():
+            raise AppServerError(
+                f"codex app-server is not running (backend={self.backend_name}, stderr_tail={self._stderr_tail[-5:]})"
+            )
+        payload = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+        with self._send_lock:
+            if self.ws is not None:
+                self.ws.send(payload)
+            else:
+                assert self.proc is not None and self.proc.stdin is not None
+                self.proc.stdin.write(payload + "\n")
+                self.proc.stdin.flush()
+
+    def _reject_server_request(self, msg: dict[str, Any]) -> None:
+        method = str(msg.get("method") or "")
+        rid = msg.get("id")
+        if not isinstance(rid, int):
+            return
+        if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
+            response: dict[str, Any] = {"id": rid, "result": "decline"}
+        elif method == "item/permissions/requestApproval":
+            response = {"id": rid, "result": {"permissions": {}}}
+        elif method in {"mcpServer/elicitation/request", "tool/requestUserInput"}:
+            response = {"id": rid, "result": {"action": "decline", "content": None}}
+        elif method == "item/tool/call":
+            response = {"id": rid, "result": {"contentItems": [], "success": False}}
+        else:
+            response = {
+                "id": rid,
+                "error": {"code": -32601, "message": "ReasonFirst bridge declines unsupported server request"},
+            }
+        try:
+            self._write(response)
+        except Exception:
+            pass
+        self._emit_event({"method": "bridge/serverRequestDeclined", "params": {"method": method}})
+
+    def _handle_server_request_async(self, msg: dict[str, Any]) -> None:
+        rid = msg.get("id")
+        if not isinstance(rid, int):
+            return
+        try:
+            if self.server_request_handler is None:
+                self._reject_server_request(msg)
+                return
+            result = self.server_request_handler(msg)
