@@ -2,7 +2,7 @@
 
 v4.0.3 的实际安装与网页接入说明以包根目录 [README.md](../README.md) 为准。
 
-v4 replaces the GitHub-Issue polling bus with a **local MCP server**.
+这是 v4.0.2 的设计目标，不代表普通 ChatGPT 会话已获得本地 MCP 工具。v4.0.3 的当前网页入口仍是 GitHub Issue connector。
 
 ## Responsibility boundary
 
@@ -26,11 +26,11 @@ ReasonFirst MCP on Mac
 
 ## What changed from v3
 
-- No GitHub polling on the primary path.
+- Codex 可直接调用本地 MCP；普通 ChatGPT Web/App 在没有 MCP 连接时仍使用 GitHub relay。
 - `run_reasonfirst.sh` starts the MCP STDIO server, **not** `github_control_relay.py`.
-- ChatGPT Desktop can start ReasonFirst directly as a local STDIO MCP server.
-- ChatGPT Web can use the same server through OpenAI Secure MCP Tunnel.
-- GitHub relay remains only as an explicit legacy fallback/audit path.
+- 普通 ChatGPT Desktop 聊天不会自动读取 Codex 的 MCP 配置或个人插件。
+- ChatGPT Web 只有在开发者模式下注册连接后，才能通过 Secure MCP Tunnel 使用本地服务。
+- 在该账号无法使用开发者模式期间，GitHub relay 是普通聊天的可用控制通道。
 - Codex runs locally and inherits the normal global Codex configuration/login state.
 - SSH targets do **not** need Codex installed.
 - Remote commit/push is performed by Codex only after ChatGPT approves the exact reviewed snapshot.
@@ -87,7 +87,7 @@ Restart ChatGPT Desktop / Codex after changing MCP configuration.
 
 ## ChatGPT Desktop
 
-After `configure_v4.sh`, restart ChatGPT Desktop. ReasonFirst is configured as a local STDIO MCP server. You can also inspect/add it under Desktop MCP server settings.
+After `configure_v4.sh`, restart Codex. ReasonFirst is configured for Codex as a local MCP server. This does not add tools to ordinary ChatGPT Desktop chat.
 
 The MCP command is:
 
