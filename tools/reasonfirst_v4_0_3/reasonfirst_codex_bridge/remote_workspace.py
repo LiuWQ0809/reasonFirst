@@ -448,3 +448,53 @@ print(json.dumps({"head":head,"branch":branch,"digest":h.hexdigest(),"dirty":boo
         blocked_names = {
             ".env", ".env.local", ".env.production", "id_rsa", "id_ed25519",
             "credentials", "credentials.json", "secrets.json",
+        }
+        blocked_suffixes = {".pem", ".key", ".p12", ".pfx", ".jks"}
+        for raw in paths:
+            p = PurePosixPath(str(raw))
+            lower_parts = {part.lower() for part in p.parts}
+            name = p.name.lower()
+            if ".ssh" in lower_parts or name in blocked_names or p.suffix.lower() in blocked_suffixes:
+                return f"sensitive path is not allowed in automatic push: {raw}"
+        return None
+
+    def _push_script(self, state: dict[str, Any], *, with_forwarded_credential: bool) -> str:
+        qwt = shlex.quote(str(state["worktree_path"]))
+        lines = [
+            "set -eu",
+            f"wt={qwt}",
+            'branch=$(git -C "$wt" branch --show-current)',
+            'case "$branch" in chatgpt/*) ;; *) echo "unsafe branch: $branch" >&2; exit 41 ;; esac',
+            "export GIT_TERMINAL_PROMPT=0",
+        ]
+        if with_forwarded_credential:
+            lines += [
+                'rf_auth_dir=$(mktemp -d "${TMPDIR:-/tmp}/reasonfirst-push.XXXXXX")',
+                'trap \'rm -rf "$rf_auth_dir"\' EXIT HUP INT TERM',
+                'cat >"$rf_auth_dir/askpass" <<\'RF_ASKPASS\'',
+                '#!/bin/sh',
+                'case "$1" in',
+                '  *sername*|*SERNAME*) printf \'%s\\n\' "$RF_GIT_USERNAME" ;;',
+                '  *) printf \'%s\\n\' "$RF_GIT_PASSWORD" ;;',
+                'esac',
+                'RF_ASKPASS',
+                'chmod 700 "$rf_auth_dir/askpass"',
+                f"export RF_GIT_USERNAME={shlex.quote(self.git_username)}",
+                f"export RF_GIT_PASSWORD={shlex.quote(self.git_password)}",
+                'export GIT_ASKPASS="$rf_auth_dir/askpass"',
+            ]
+        lines.append('git -C "$wt" push --set-upstream origin "HEAD:refs/heads/$branch"')
+        return "\n".join(lines) + "\n"
+
+    def commit_push(
+        self,
+        state: dict[str, Any],
+        *,
+        expected_digest: str,
+        message: str,
+    ) -> dict[str, Any]:
+        """Commit and push the exact ChatGPT-reviewed snapshot without force push."""
+        message = str(message or "").strip()
+        if not message or len(message) > 240 or "\n" in message or "\r" in message:
+            raise RemoteWorkspaceError("commit message must be one non-empty line up to 240 characters")
+        snap = self.snapshot(state)
