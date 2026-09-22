@@ -798,3 +798,53 @@ class BridgeController:
             "turn_id": session.get("last_turn_id"),
             "turn_status": session.get("last_turn_status"),
             "last_agent_message": redact(str(session.get("last_agent_message") or ""), 6000),
+            "codex_backend": self._app_for_session(session)[1].backend_name,
+            "workspace": workspace,
+            "push_approved": isinstance(session.get("push_approval"), dict),
+            "last_push": session.get("last_push"),
+        }
+
+    def authorize_push(self, *, thread_id: str, commit_message: str) -> dict[str, Any]:
+        """Authorize Codex to commit/push exactly the currently reviewed remote snapshot."""
+        session = self._session(thread_id)
+        rec = self._workspace_record(str(session["workspace_id"]))
+        if rec.get("kind") != "ssh":
+            raise BridgeError("v4 authorize_push currently supports managed SSH workspaces; use the local ActualCoder finish flow for local workspaces")
+        target = self._target_from_dict(rec.get("target") or {})
+        snap = self._remote_manager(target).snapshot(rec)
+        if not snap.get("dirty"):
+            raise BridgeError("workspace has no changes to push")
+        message = str(commit_message or "").strip()
+        if not message or len(message) > 240 or "\n" in message or "\r" in message:
+            raise BridgeError("commit_message must be one non-empty line up to 240 characters")
+        with self._lock:
+            session["push_approval"] = {
+                "digest": str(snap.get("digest") or ""),
+                "message": message,
+                "approved_at": int(time.time()),
+            }
+            session["updated_at"] = int(time.time())
+            self._save_state()
+        return {
+            "ok": True,
+            "thread_id": thread_id,
+            "workspace_id": session["workspace_id"],
+            "branch": snap.get("branch"),
+            "head": snap.get("head"),
+            "digest": snap.get("digest"),
+            "changed_paths": snap.get("changed_paths"),
+            "commit_message": message,
+            "next": "Ask Codex to call reasonfirst_remote.commit_push. Any code change after this approval invalidates the digest and blocks the push.",
+        }
+
+    def artifacts(self, *, workspace_id: str = "", thread_id: str = "", path: str = ".", changed_only: bool = True, max_entries: int = 80, max_text_chars: int = 20000, max_visual_previews: int = 2) -> dict[str, Any]:
+        wid=self._workspace_id(workspace_id=workspace_id,thread_id=thread_id); rec=self._workspace_record(wid); since=int(rec.get("created_at") or 0)
+        if rec.get("kind") != "ssh":
+            status=_run_json(_module_command("gitlab_agent.actual_coder_cli","status",wid),timeout=60); worktree=Path(self._assert_worktree_allowed(str(status.get("worktree_path") or ""))); result=scan_artifacts(worktree,relative_path=path,since_epoch=since,changed_only=changed_only,max_entries=max_entries,max_text_chars=max_text_chars,max_visual_previews=max_visual_previews)
+            for item in result.get("items",[]):
+                if isinstance(item,dict) and isinstance(item.get("content"),str): item["content"]=redact(str(item["content"]),40000)
+            return {"ok":True,"workspace_id":wid,**result}
+        target=self._target_from_dict(rec["target"]); manager=self._remote_manager(target); candidates=manager.artifact_candidates(rec,path,since_epoch=since if changed_only else 0,max_entries=max_entries); items=[]; previews=0
+        for candidate in candidates:
+            try:
+                payload=manager.read_bytes_b64(rec,str(candidate["path"]),max_bytes=16*1024*1024); raw=base64.b64decode(payload["base64"])
