@@ -148,3 +148,53 @@ class RemoteWorkspaceManager:
 
     def create_workspace(self, *, project: str, base_ref: str, task: str) -> dict[str, Any]:
         repo = self.target.repo
+        base = str(base_ref or "main").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._/-]+", base) or base.startswith("-") or ".." in base.split("/"):
+            raise RemoteWorkspaceError(f"Unsafe base ref: {base!r}")
+
+        origin = self._origin_url()
+        safe_origin = self._safe_origin_url(origin)
+        fetch = self._ssh(
+            self._git_fetch_script(base=base, with_forwarded_credential=False),
+            timeout=180,
+            check=False,
+        )
+        auth_forwarded = False
+        if fetch.returncode != 0 and self._can_forward_git_credential(origin):
+            fetch = self._ssh(
+                self._git_fetch_script(base=base, with_forwarded_credential=True),
+                timeout=180,
+                check=False,
+            )
+            auth_forwarded = True
+        if fetch.returncode != 0:
+            raise RemoteWorkspaceError(
+                "Remote Git fetch failed. SSH login and GitLab repository authentication are separate. "
+                f"git stderr: {fetch.stderr[-2500:]}"
+            )
+
+        workspace_id = "ssh-" + uuid.uuid4().hex[:12]
+        branch = f"chatgpt/{_slug(task)}-{workspace_id[-6:]}"
+        qrepo = shlex.quote(repo)
+        qbranch = shlex.quote(branch)
+        qremote_base = shlex.quote("origin/" + base)
+        qorigin = shlex.quote(safe_origin)
+        cmd = f"""
+set -eu
+repo={qrepo}
+base_sha=$(git -C "$repo" rev-parse --verify {qremote_base})
+root="$HOME/.local/share/reasonfirst/worktrees"
+mkdir -p "$root"
+wt="$root/{workspace_id}"
+if [ -e "$wt" ]; then echo 'worktree already exists' >&2; exit 9; fi
+git -C "$repo" worktree add -b {qbranch} "$wt" "$base_sha" >/dev/null
+printf '{{"workspace_id":"%s","worktree_path":"%s","base_sha":"%s","branch":"%s","origin_url":"%s"}}\n' \\
+  {shlex.quote(workspace_id)} "$wt" "$base_sha" {qbranch} {qorigin}
+"""
+        proc = self._ssh(cmd, timeout=120)
+        line = proc.stdout.strip().splitlines()[-1]
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RemoteWorkspaceError(f"Remote workspace creation returned invalid JSON: {line!r}") from exc
+        data.update({
