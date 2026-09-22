@@ -98,3 +98,14 @@ def main():
         relay.gh_json = fake_gh
         try:
             result = relay.publish_artifact("example-user/reasonfirst-control", ctrl, {"path": "reports/curve.png"})
+        finally:
+            relay.gh_json = original
+        assert result["ok"] is True
+        assert result["published"]["sha"] == "abc"
+        assert seen["input"]["content"]
+        assert "repos/example-user/reasonfirst-control/contents/artifacts/" in seen["args"][0]
+    print("relay dispatch/publish flow: OK")
+
+
+if __name__ == "__main__":
+    main()
