@@ -548,3 +548,53 @@ git -C "$wt" rev-parse HEAD
                 f"commit safety/commit step failed (exit {committed.returncode}): {committed.stderr[-3000:]}"
             )
         commit_sha = committed.stdout.strip().splitlines()[-1]
+
+        origin = self._origin_url()
+        pushed = self._ssh(self._push_script(state, with_forwarded_credential=False), timeout=180, check=False)
+        auth_forwarded = False
+        if pushed.returncode != 0 and self._can_forward_git_credential(origin):
+            pushed = self._ssh(self._push_script(state, with_forwarded_credential=True), timeout=180, check=False)
+            auth_forwarded = True
+        if pushed.returncode != 0:
+            raise RemoteWorkspaceError(
+                f"commit {commit_sha} was created, but push failed (exit {pushed.returncode}): {pushed.stderr[-3000:]}"
+            )
+        return {
+            "ok": True,
+            "branch": branch,
+            "commit_sha": commit_sha,
+            "pushed": True,
+            "git_auth_forwarded": auth_forwarded,
+            "stdout": pushed.stdout[-6000:],
+            "stderr": pushed.stderr[-3000:],
+        }
+
+    def cleanup(self, state: dict[str, Any], *, force: bool = False) -> dict[str, Any]:
+        repo = shlex.quote(self.target.repo)
+        wt = shlex.quote(str(state["worktree_path"]))
+        flag = "--force" if force else ""
+        proc = self._ssh(f"git -C {repo} worktree remove {flag} {wt}", timeout=60, check=False)
+        return {"ok": proc.returncode == 0, "returncode": proc.returncode, "stderr": proc.stderr[-2000:]}
+
+    def artifact_candidates(self, state: dict[str, Any], path: str = ".", *, since_epoch: int = 0, max_entries: int = 50) -> list[dict[str, Any]]:
+        rel = _safe_relative(path)
+        script = r'''
+import json, pathlib, sys
+root=pathlib.Path(sys.argv[1]).resolve(); rel=sys.argv[2]; since=int(sys.argv[3]); limit=int(sys.argv[4])
+start=(root/rel).resolve(); start.relative_to(root)
+exts={".md",".txt",".json",".jsonl",".csv",".tsv",".yaml",".yml",".xml",".html",".htm",".log",".svg",".png",".jpg",".jpeg",".webp",".gif",".bmp",".pdf",".docx"}
+out=[]
+paths=[start] if start.is_file() else start.rglob("*") if start.is_dir() else []
+for p in paths:
+    if not p.is_file() or p.suffix.lower() not in exts: continue
+    st=p.stat()
+    if since and int(st.st_mtime)<since: continue
+    out.append({"path":str(p.relative_to(root)),"size":st.st_size,"mtime":int(st.st_mtime),"suffix":p.suffix.lower()})
+    if len(out)>=limit: break
+print(json.dumps(out))
+'''
+        cmd = "python3 -c {} {} {} {} {}".format(
+            shlex.quote(script), shlex.quote(str(state["worktree_path"])), shlex.quote(rel),
+            int(since_epoch), max(1, min(int(max_entries), 100)),
+        )
+        proc = self._ssh(cmd, timeout=60)
