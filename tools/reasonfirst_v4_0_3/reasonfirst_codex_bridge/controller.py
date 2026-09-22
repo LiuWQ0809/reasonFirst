@@ -198,3 +198,53 @@ class BridgeController:
         )
         with self._lock:
             rec["target"] = migrated.to_dict()
+            rec["updated_at"] = int(time.time())
+            rec["execution_migration"] = {
+                "from": "remote-ssh",
+                "to": "desktop-proxy",
+                "reason": "remote Codex binary not found",
+                "at": int(time.time()),
+            }
+            self._state["workspaces"][workspace_id] = rec
+            self._save_state()
+        return migrated, True
+
+    def _app_key(self, target: ExecutionTarget) -> str:
+        if target.type == "ssh" and target.codex_backend == "remote-ssh":
+            return f"ssh:{target.host}:{target.remote_codex}"
+        if target.type == "ssh":
+            return f"proxy:{target.codex_backend}"
+        return f"local:{target.codex_backend}"
+
+    def _get_app(self, target: ExecutionTarget) -> tuple[str, AppServerClient]:
+        key = self._app_key(target)
+        existing = self._apps.get(key)
+        if existing is not None:
+            return key, existing
+        handler = lambda event, app_key=key: self._on_event(event, app_key)
+        request_handler = lambda msg, app_key=key: self._handle_dynamic_tool_request(app_key, msg)
+        if target.type == "ssh" and target.codex_backend == "remote-ssh":
+            app = AppServerClient.remote_ssh(
+                target.host,
+                remote_codex=target.remote_codex,
+                event_handler=handler,
+                server_request_handler=request_handler,
+                connect_timeout=target.ssh_connect_timeout,
+            )
+        elif target.codex_backend in {"global-config-local", "desktop-proxy"}:
+            app = AppServerClient.global_config_local(
+                event_handler=handler, server_request_handler=request_handler
+            )
+        elif target.codex_backend == "desktop-required":
+            app = AppServerClient.desktop_preferred(
+                event_handler=handler, server_request_handler=request_handler, required=True
+            )
+        elif target.codex_backend == "desktop-managed":
+            app = AppServerClient.desktop_preferred(
+                event_handler=handler, server_request_handler=request_handler, required=True
+            )
+        elif target.codex_backend == "standalone-local":
+            app = AppServerClient(
+                event_handler=handler,
+                server_request_handler=request_handler,
+                backend_name="standalone-local",
