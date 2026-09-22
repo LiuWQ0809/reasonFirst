@@ -548,3 +548,53 @@ class BridgeController:
 
     def prepare(self, *, project: str, task: str = "chatgpt-analysis", goal: str = "Prepare repository for ChatGPT analysis only; do not modify files.", base_ref: str = "", execution: Any = None) -> dict[str, Any]:
         target = resolve_target(execution, config=self.bridge_config)
+        if target.type == "ssh":
+            manager = self._remote_manager(target)
+            probe = manager.probe()
+            if not probe.get("ok"): raise BridgeError(f"SSH execution target is not ready: {probe}")
+            state = manager.create_workspace(project=project, base_ref=base_ref or "main", task=task)
+            wid = str(state["workspace_id"])
+            record = {**state, "task": task, "goal": goal, "target": target.to_dict(), "kind": "ssh", "updated_at": int(time.time())}
+            with self._lock: self._state["workspaces"][wid] = record; self._save_state()
+            return {"ok": True, "workspace_id": wid, "worktree_path": state["worktree_path"], "project": project, "codex_started": False, "execution": target.to_dict(), "base_sha": state["base_sha"], "branch": state["branch"], "origin_url": state["origin_url"]}
+
+        preflight = self.project_preflight(project, ref=base_ref)
+        argv = _module_command("gitlab_agent.actual_coder_cli", "start", project, "--task", task, "--goal", goal, "--agent", "codex", "--no-launch")
+        if self._git_only_mode(): argv.append("--git-only")
+        if base_ref: argv += ["--base-ref", base_ref]
+        prepared = _run_json(argv, timeout=180)
+        workspace = prepared.get("workspace")
+        if not isinstance(workspace, dict): raise BridgeError("actual-coder start returned no workspace")
+        wid = str(workspace.get("workspace_id") or ""); worktree = self._assert_worktree_allowed(str(prepared.get("worktree_path") or ""))
+        record = {"workspace_id": wid, "project": project, "task": task, "goal": goal, "worktree_path": worktree, "kind": "local", "target": target.to_dict(), "created_at": int(time.time()), "updated_at": int(time.time())}
+        with self._lock: self._state["workspaces"][wid] = record; self._save_state()
+        return {"ok": True, "project_preflight": preflight, "workspace_id": wid, "worktree_path": worktree, "project": project, "codex_started": False, "execution": target.to_dict()}
+
+    def _workspace_id(self, *, workspace_id: str = "", thread_id: str = "") -> str:
+        if workspace_id: self._workspace_record(workspace_id); return workspace_id
+        if thread_id: return str(self._session(thread_id)["workspace_id"])
+        raise BridgeError("workspace_id or thread_id is required")
+
+    def workspace_status(self, *, workspace_id: str = "", thread_id: str = "") -> dict[str, Any]:
+        wid = self._workspace_id(workspace_id=workspace_id, thread_id=thread_id); rec = self._workspace_record(wid)
+        if rec.get("kind") == "ssh":
+            target = self._target_from_dict(rec["target"]); return {"ok": True, "workspace": self._remote_manager(target).status(rec)}
+        return {"ok": True, "workspace": _run_json(_module_command("gitlab_agent.actual_coder_cli", "status", wid), timeout=60)}
+
+    def files(self, *, workspace_id: str = "", thread_id: str = "", path: str = ".", recursive: bool = False, max_entries: int = 300) -> dict[str, Any]:
+        wid = self._workspace_id(workspace_id=workspace_id, thread_id=thread_id); rec = self._workspace_record(wid)
+        if rec.get("kind") == "ssh":
+            target = self._target_from_dict(rec["target"]); data = self._remote_manager(target).list_files(rec, path, recursive=recursive, max_entries=max_entries); return {"ok": True, "workspace_id": wid, **data}
+        argv = _module_command("gitlab_agent.actual_coder_cli", "files", wid, path, "--max-entries", str(max(1,min(int(max_entries),500))))
+        if recursive: argv.append("--recursive")
+        return {"ok": True, **_run_json(argv, timeout=60)}
+
+    def read(self, *, workspace_id: str = "", thread_id: str = "", path: str, start_line: int = 1, end_line: int = 0, max_chars: int = 32000) -> dict[str, Any]:
+        wid = self._workspace_id(workspace_id=workspace_id, thread_id=thread_id); rec = self._workspace_record(wid)
+        if rec.get("kind") == "ssh":
+            target = self._target_from_dict(rec["target"]); result = self._remote_manager(target).read_file(rec, path)
+        else:
+            result = _run_json(_module_command("gitlab_agent.actual_coder_cli", "read", wid, path), timeout=60)
+        content = str(result.get("content") or ""); lines = content.splitlines(); start=max(1,int(start_line)); end=int(end_line) if int(end_line)>0 else len(lines); end=max(start,min(end,len(lines))) if lines else 0
+        numbered="\n".join(f"{idx}: {line}" for idx,line in enumerate(lines[start-1:end] if lines else [], start=start)); cap=max(1000,min(int(max_chars),40000)); clipped=redact(numbered,cap)
+        return {"ok": True, "workspace_id": wid, "path": path, "total_lines": len(lines), "start_line": start if lines else 0, "end_line": end, "truncated": bool(result.get("truncated")) or len(numbered)>len(clipped), "content": clipped}
