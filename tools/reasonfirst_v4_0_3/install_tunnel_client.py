@@ -48,3 +48,13 @@ def main() -> int:
             tmp = Path(f.name)
             f.write(archive.read(candidates[0]))
         try:
+            os.chmod(tmp, 0o755)
+            tmp.replace(target_dir / "tunnel-client")
+        finally:
+            tmp.unlink(missing_ok=True)
+    print(f"Installed verified {release['tag_name']}: {target_dir / 'tunnel-client'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
