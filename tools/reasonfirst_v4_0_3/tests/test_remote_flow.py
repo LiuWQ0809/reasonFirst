@@ -48,3 +48,13 @@ def main():
         assert any(x['path']=='reports/metrics.json' for x in candidates)
         blob=mgr.read_bytes_b64(state,'reports/metrics.json')
         assert blob['size']>0 and blob['base64']
+
+        app=AppServerClient.remote_ssh('fake-host',event_handler=lambda e: None)
+        tid=app.start_thread(cwd=state['worktree_path'])
+        turn=app.start_turn(thread_id=tid,cwd=state['worktree_path'],prompt='remote test',network_access=False)
+        assert tid.startswith('thr_') and turn.startswith('turn_')
+        app.close()
+        os.environ['PATH']=oldpath
+    print('remote workspace + remote codex app-server flow: OK')
+
+if __name__=='__main__': main()
