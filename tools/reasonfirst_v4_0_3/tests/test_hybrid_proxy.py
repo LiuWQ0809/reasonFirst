@@ -48,3 +48,31 @@ def main():
                 def __getattr__(self, name):
                     return getattr(mgr, name)
                 def probe(self):
+                    data=mgr.probe()
+                    data['stdout']='host=fake\nuser=test\nrepo='+str(repo)+'\ncodex='
+                    return data
+            ctrl._remote_manager=lambda target: ManagerProxy()
+            ctrl._state['workspaces'][ws['workspace_id']]=rec
+            ctrl._save_state()
+            started=ctrl.start_codex(workspace_id=ws['workspace_id'],goal='implement reviewed plan')
+            assert started['execution_migrated'] is True, started
+            assert started['execution']['codex_backend']=='desktop-proxy', started
+            assert started['worktree_path']==ws['worktree_path'], started
+            assert started['remote_tools'] is True, started
+            assert started['codex_backend'] in {'standalone-local','desktop-bundled','desktop-managed','global-config-local'}, started
+            assert pathlib.Path(started['codex_cwd']).is_dir()
+            deadline=time.monotonic()+10
+            while True:
+                ev=ctrl.events(thread_id=started['thread_id'],limit=30)
+                if any(item.get('method')=='turn/completed' for item in ev['events']) or time.monotonic()>=deadline:
+                    break
+                time.sleep(0.1)
+            assert any(item.get('method')=='turn/completed' for item in ev['events']), ev
+            assert 'dynamic:' in ev['last_agent_message'], ev
+            status=mgr.status(rec); assert status['dirty'] is False
+            ctrl.close()
+        finally:
+            os.environ.clear(); os.environ.update(old_env)
+    print('hybrid local Codex + remote SSH dynamic tools: OK')
+
+if __name__=='__main__': main()
