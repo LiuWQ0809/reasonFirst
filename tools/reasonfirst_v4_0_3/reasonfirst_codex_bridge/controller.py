@@ -748,3 +748,53 @@ class BridgeController:
         session, app = self._ensure_loaded(thread_id)
         rec = self._workspace_record(str(session["workspace_id"]))
         target = self._target_from_dict(session["target"])
+        sandbox_mode = "workspace-write"
+        if rec.get("kind") == "ssh":
+            if self._is_remote_proxy_target(target):
+                prompt = self._hybrid_remote_prompt(rec, goal)
+                sandbox_mode = "read-only"
+            else:
+                prompt = self._remote_prompt(rec, goal)
+        else:
+            handoff = _run_json(
+                _module_command("gitlab_agent.actual_coder_cli", "resume", str(session["workspace_id"]), "--agent", "codex", "--goal", goal),
+                timeout=120,
+            )
+            prompt = str(handoff.get("agent_prompt") or "")
+        cwd = str(session.get("codex_cwd") or session["worktree_path"])
+        turn_id = app.start_turn(
+            thread_id=thread_id,
+            cwd=cwd,
+            prompt=prompt,
+            network_access=False if self._is_remote_proxy_target(target) else target.network_access,
+            sandbox_mode=sandbox_mode,
+        )
+        with self._lock:
+            session["last_turn_id"] = turn_id
+            session["last_turn_status"] = "inProgress"
+            session["updated_at"] = int(time.time())
+            self._save_state()
+        return {"ok": True, "thread_id": thread_id, "turn_id": turn_id}
+
+    def steer(self, *, thread_id: str, prompt: str, turn_id: str = "") -> dict[str, Any]:
+        session,app=self._ensure_loaded(thread_id); tid=turn_id or str(session.get("last_turn_id") or ""); accepted=app.steer(thread_id=thread_id,turn_id=tid,prompt=prompt); return {"ok":True,"thread_id":thread_id,"turn_id":accepted}
+
+    def interrupt(self, *, thread_id: str, turn_id: str = "") -> dict[str, Any]:
+        session,app=self._ensure_loaded(thread_id); tid=turn_id or str(session.get("last_turn_id") or ""); app.interrupt(thread_id=thread_id,turn_id=tid); return {"ok":True,"thread_id":thread_id,"turn_id":tid}
+
+    def status(self, *, thread_id: str) -> dict[str, Any]:
+        session,app=self._ensure_loaded(thread_id); thread=app.read_thread(thread_id,include_turns=False); return {"ok":True,"session":dict(session),"thread":thread,"workspace":self.workspace_status(thread_id=thread_id).get("workspace"),"codex_backend":app.backend_name}
+
+    def events(self, *, thread_id: str, limit: int = 30) -> dict[str, Any]:
+        session=self._session(thread_id); events=list(session.get("events",[]))[-max(1,min(int(limit),100)):]; return {"ok":True,"thread_id":thread_id,"events":events,"last_agent_message":redact(str(session.get("last_agent_message") or ""),12000)}
+
+    def compact_status(self, *, thread_id: str) -> dict[str, Any]:
+        session = self._session(thread_id)
+        workspace = self.workspace_status(thread_id=thread_id).get("workspace")
+        return {
+            "ok": True,
+            "thread_id": thread_id,
+            "workspace_id": session.get("workspace_id"),
+            "turn_id": session.get("last_turn_id"),
+            "turn_status": session.get("last_turn_status"),
+            "last_agent_message": redact(str(session.get("last_agent_message") or ""), 6000),
