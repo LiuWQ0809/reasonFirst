@@ -348,3 +348,53 @@ class BridgeController:
         if tool == "status":
             result = manager.status(rec)
         elif tool == "files":
+            result = manager.list_files(
+                rec,
+                str(args.get("path") or "."),
+                recursive=bool(args.get("recursive", False)),
+                max_entries=int(args.get("max_entries") or 200),
+            )
+        elif tool == "read":
+            result = manager.read_file(
+                rec,
+                str(args.get("path") or ""),
+                max_bytes=int(args.get("max_bytes") or 1024 * 1024),
+            )
+        elif tool == "write":
+            result = manager.write_file(rec, str(args.get("path") or ""), str(args.get("content") or ""))
+        elif tool == "apply_patch":
+            result = manager.apply_patch(rec, str(args.get("patch") or ""))
+        elif tool == "run":
+            result = manager.run_command(
+                rec,
+                str(args.get("command") or ""),
+                cwd=str(args.get("cwd") or "."),
+                timeout_seconds=int(args.get("timeout_seconds") or 300),
+            )
+        elif tool == "snapshot":
+            result = manager.snapshot(rec)
+        elif tool == "commit_push":
+            approval = session.get("push_approval") if isinstance(session.get("push_approval"), dict) else None
+            if not approval:
+                raise BridgeError("Push is not authorized. ChatGPT must review the current diff and call authorize_push first.")
+            result = manager.commit_push(
+                rec,
+                expected_digest=str(approval.get("digest") or ""),
+                message=str(approval.get("message") or ""),
+            )
+            with self._lock:
+                session.pop("push_approval", None)
+                session["last_push"] = {
+                    "commit_sha": result.get("commit_sha"),
+                    "branch": result.get("branch"),
+                    "at": int(time.time()),
+                }
+                rec["pushed"] = True
+                rec["last_commit"] = result.get("commit_sha")
+                rec["remote_branch"] = result.get("branch")
+                self._state["workspaces"][str(session["workspace_id"])] = rec
+                self._save_state()
+        elif tool == "diff":
+            result = manager.diff(rec)
+        else:
+            raise BridgeError(f"Unknown ReasonFirst remote tool: {tool}")
