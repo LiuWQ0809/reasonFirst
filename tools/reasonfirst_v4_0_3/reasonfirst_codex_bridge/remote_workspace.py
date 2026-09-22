@@ -98,3 +98,53 @@ class RemoteWorkspaceManager:
         if not value:
             raise RemoteWorkspaceError("Remote repository has no origin URL")
         return value
+
+    @staticmethod
+    def _safe_origin_url(origin_url: str) -> str:
+        parsed = urlparse(origin_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return origin_url
+        host = parsed.hostname
+        if parsed.port is not None:
+            host += f":{parsed.port}"
+        return parsed._replace(netloc=host).geturl()
+
+    def _can_forward_git_credential(self, origin_url: str) -> bool:
+        if not (self.git_username and self.git_password and self.gitlab_host):
+            return False
+        parsed = urlparse(origin_url)
+        return (
+            parsed.scheme in {"http", "https"}
+            and (parsed.hostname or "").lower() == self.gitlab_host
+        )
+
+    def _git_fetch_script(self, *, base: str, with_forwarded_credential: bool) -> str:
+        qrepo = shlex.quote(self.target.repo)
+        qbase = shlex.quote(base)
+        lines = [
+            "set -eu",
+            f"repo={qrepo}",
+            'git -C "$repo" rev-parse --is-inside-work-tree >/dev/null',
+            "export GIT_TERMINAL_PROMPT=0",
+        ]
+        if with_forwarded_credential:
+            lines += [
+                'rf_auth_dir=$(mktemp -d "${TMPDIR:-/tmp}/reasonfirst-git.XXXXXX")',
+                'trap \'rm -rf "$rf_auth_dir"\' EXIT HUP INT TERM',
+                'cat >"$rf_auth_dir/askpass" <<\'RF_ASKPASS\'',
+                '#!/bin/sh',
+                'case "$1" in',
+                '  *sername*|*SERNAME*) printf \'%s\\n\' "$RF_GIT_USERNAME" ;;',
+                '  *) printf \'%s\\n\' "$RF_GIT_PASSWORD" ;;',
+                'esac',
+                'RF_ASKPASS',
+                'chmod 700 "$rf_auth_dir/askpass"',
+                f"export RF_GIT_USERNAME={shlex.quote(self.git_username)}",
+                f"export RF_GIT_PASSWORD={shlex.quote(self.git_password)}",
+                'export GIT_ASKPASS="$rf_auth_dir/askpass"',
+            ]
+        lines.append(f'git -C "$repo" fetch --prune origin {qbase}')
+        return "\n".join(lines) + "\n"
+
+    def create_workspace(self, *, project: str, base_ref: str, task: str) -> dict[str, Any]:
+        repo = self.target.repo
