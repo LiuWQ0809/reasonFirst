@@ -48,3 +48,28 @@ for line in sys.stdin:
         if has_dynamic_tools:
             print(json.dumps({"method":"item/started","params":{"threadId":thread,"turnId":turn,"item":{"id":"dyn1","type":"dynamicToolCall","namespace":"reasonfirst_remote","tool":"status","arguments":{},"status":"inProgress"}}}), flush=True)
             print(json.dumps({"id":900,"method":"item/tool/call","params":{"threadId":thread,"turnId":turn,"callId":"dyn1","namespace":"reasonfirst_remote","tool":"status","arguments":{}}}), flush=True)
+        else:
+            print(json.dumps({"method":"item/agentMessage/delta","params":{"threadId":thread,"turnId":turn,"itemId":"i1","delta":"fake ok"}}), flush=True)
+            print(json.dumps({"method":"turn/completed","params":{"threadId":thread,"turn":{"id":turn,"status":"completed"}}}), flush=True)
+    elif method == "thread/name/set":
+        thread_name = m.get("params",{}).get("name")
+        print(json.dumps({"id":rid,"result":{}}), flush=True)
+        print(json.dumps({"method":"thread/name/updated","params":{"threadId":thread,"name":thread_name}}), flush=True)
+    elif method == "thread/goal/set":
+        thread_goal = m.get("params",{}).get("objective")
+        print(json.dumps({"id":rid,"result":{"goal":{"threadId":thread,"objective":thread_goal,"status":"active"}}}), flush=True)
+    elif method == "thread/metadata/update":
+        params=m.get("params",{})
+        metadata["isPinned"]=params.get("isPinned", metadata["isPinned"])
+        metadata["gitInfo"].update(params.get("gitInfo") or {})
+        print(json.dumps({"id":rid,"result":{"thread":{"id":thread,"isPinned":metadata["isPinned"],"gitInfo":metadata["gitInfo"]}}}), flush=True)
+    elif method == "thread/list":
+        print(json.dumps({"id":rid,"result":{"data":[{"id":thread,"name":thread_name,"isPinned":metadata["isPinned"],"source":"appServer"}],"nextCursor":None}}), flush=True)
+    elif method == "turn/steer":
+        print(json.dumps({"id":rid,"result":{"turnId":turn}}), flush=True)
+    elif method == "turn/interrupt":
+        print(json.dumps({"id":rid,"result":{}}), flush=True)
+    elif method == "thread/read":
+        print(json.dumps({"id":rid,"result":{"thread":{"id":thread,"name":thread_name,"isPinned":metadata["isPinned"],"gitInfo":metadata["gitInfo"],"status":{"type":"idle"}}}}), flush=True)
+    else:
+        print(json.dumps({"id":rid,"error":{"code":-1,"message":"unsupported"}}), flush=True)
