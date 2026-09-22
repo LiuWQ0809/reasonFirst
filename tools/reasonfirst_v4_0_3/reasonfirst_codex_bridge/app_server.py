@@ -498,3 +498,53 @@ class AppServerClient:
             )
         sandbox_modes = req.get("allowedSandboxModes")
         if isinstance(sandbox_modes, list) and sandbox_modes:
+            normalized = {str(item).replace("_", "-").replace("workspaceWrite", "workspace-write").replace("readOnly", "read-only").lower() for item in sandbox_modes}
+            wanted = sandbox_mode.replace("_", "-").replace("workspaceWrite", "workspace-write").replace("readOnly", "read-only").lower()
+            if wanted not in normalized:
+                raise AppServerError(
+                    f"Codex admin requirements do not allow {sandbox_mode} sandbox mode."
+                )
+
+    def start_thread(
+        self,
+        *,
+        cwd: str,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+        sandbox_mode: str = "workspace-write",
+    ) -> str:
+        self.assert_noninteractive_policy_allowed(sandbox_mode=sandbox_mode)
+        params: dict[str, Any] = {
+            "cwd": cwd,
+            "approvalPolicy": "never",
+            "sandbox": sandbox_mode,
+            "serviceName": "codex_work_desktop",
+            "threadSource": "user",
+        }
+        if dynamic_tools:
+            params["dynamicTools"] = dynamic_tools
+        result = self.request(
+            "thread/start",
+            params,
+            timeout=30,
+        )
+        thread = result.get("thread") if isinstance(result, dict) else None
+        tid = thread.get("id") if isinstance(thread, dict) else None
+        if not isinstance(tid, str) or not tid:
+            raise AppServerError("thread/start returned no thread id")
+        return tid
+
+    def resume_thread(self, thread_id: str) -> None:
+        self.request("thread/resume", {"threadId": thread_id}, timeout=30)
+
+    def start_turn(self, *, thread_id: str, cwd: str, prompt: str, network_access: bool = False, sandbox_mode: str = "workspace-write") -> str:
+        params = {
+            "threadId": thread_id,
+            "input": [{"type": "text", "text": prompt}],
+            "cwd": cwd,
+            "approvalPolicy": "never",
+            "sandboxPolicy": (
+                {"type": "readOnly", "networkAccess": bool(network_access)}
+                if sandbox_mode == "read-only"
+                else {"type": "workspaceWrite", "writableRoots": [cwd], "networkAccess": bool(network_access)}
+            ),
+        }
