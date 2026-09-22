@@ -398,3 +398,53 @@ class AppServerClient:
                 "stderr_tail": self._stderr_tail[-5:],
             }
         }
+        with self._pending_lock:
+            waiters = list(self._pending.values())
+        for waiter in waiters:
+            try:
+                waiter.put_nowait(error)
+            except queue.Full:
+                pass
+
+    def _read_stdio_loop(self) -> None:
+        assert self.proc is not None and self.proc.stdout is not None
+        try:
+            for line in self.proc.stdout:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    self._handle_message(json.loads(raw))
+                except json.JSONDecodeError:
+                    self._emit_event({"method": "bridge/protocolError", "params": {"message": "invalid JSON from app-server"}})
+        finally:
+            self._mark_closed()
+
+    def _read_ws_loop(self) -> None:
+        try:
+            assert self.ws is not None
+            for raw in self.ws:
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                try:
+                    self._handle_message(json.loads(str(raw)))
+                except json.JSONDecodeError:
+                    self._emit_event({"method": "bridge/protocolError", "params": {"message": "invalid JSON from managed app-server"}})
+        except Exception as exc:
+            self._stderr_tail.append(f"managed socket reader error: {type(exc).__name__}: {str(exc)[:1000]}")
+        finally:
+            self._mark_closed()
+
+    def request(self, method: str, params: dict[str, Any] | None = None, *, timeout: float | None = None) -> Any:
+        with self._pending_lock:
+            rid = self._next_id
+            self._next_id += 1
+            waiter: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
+            self._pending[rid] = waiter
+        try:
+            self._write({"method": method, "id": rid, "params": params or {}})
+            try:
+                msg = waiter.get(timeout=timeout or self.request_timeout)
+            except queue.Empty as exc:
+                raise AppServerError(f"Timed out waiting for app-server method {method}") from exc
+        finally:
