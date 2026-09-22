@@ -348,3 +348,53 @@ raise SystemExit(proc.returncode)
         if "rm -rf /" in lowered or "rm -fr /" in lowered:
             return "destructive root deletion is not allowed"
         return None
+
+    def run_command(
+        self,
+        state: dict[str, Any],
+        command: str,
+        *,
+        cwd: str = ".",
+        timeout_seconds: int = 300,
+    ) -> dict[str, Any]:
+        reason = self._command_block_reason(command)
+        if reason:
+            raise RemoteWorkspaceError(f"Remote command blocked by ReasonFirst policy: {reason}")
+        rel = _safe_relative(cwd)
+        timeout_seconds = max(1, min(int(timeout_seconds), 1800))
+        script = r'''
+import json, os, pathlib, subprocess, sys, time
+root=pathlib.Path(sys.argv[1]).resolve(); rel=sys.argv[2]; command=sys.argv[3]; timeout=int(sys.argv[4])
+cwd=(root/rel).resolve(); cwd.relative_to(root)
+if not cwd.is_dir(): raise SystemExit("cwd is not a directory")
+start=time.monotonic()
+try:
+    proc=subprocess.run(["bash","-lc",command],cwd=str(cwd),text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout,check=False)
+    result={"returncode":proc.returncode,"timed_out":False,"stdout":proc.stdout[-60000:],"stderr":proc.stderr[-60000:],"duration_ms":int((time.monotonic()-start)*1000)}
+except subprocess.TimeoutExpired as exc:
+    out=exc.stdout or ""; err=exc.stderr or ""
+    if isinstance(out,bytes): out=out.decode("utf-8",errors="replace")
+    if isinstance(err,bytes): err=err.decode("utf-8",errors="replace")
+    result={"returncode":None,"timed_out":True,"stdout":str(out)[-60000:],"stderr":str(err)[-60000:],"duration_ms":int((time.monotonic()-start)*1000)}
+print(json.dumps(result))
+'''
+        cmd = "python3 -c {} {} {} {} {}".format(
+            shlex.quote(script),
+            shlex.quote(str(state["worktree_path"])),
+            shlex.quote(rel),
+            shlex.quote(str(command)),
+            timeout_seconds,
+        )
+        proc = self._ssh(cmd, timeout=timeout_seconds + 30)
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
+    def diff(self, state: dict[str, Any], *, max_chars: int = 120000) -> dict[str, Any]:
+        wt = shlex.quote(str(state["worktree_path"]))
+        base = shlex.quote(str(state["base_sha"]))
+        cmd = f"""
+set -eu
+wt={wt}
+base={base}
+git -C "$wt" diff --no-ext-diff "$base" --
+printf '\n__RF_UNTRACKED__\n'
+git -C "$wt" ls-files --others --exclude-standard
