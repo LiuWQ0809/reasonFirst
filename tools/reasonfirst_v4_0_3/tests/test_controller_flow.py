@@ -98,3 +98,53 @@ def main():
                     "workspace": {"workspace_id": "abc123def456", "project": "group/project"},
                     "worktree_path": str(worktree),
                     "agent_prompt": "unused until start_codex",
+                }
+            if "status" in args:
+                return {
+                    "workspace_id": "abc123def456",
+                    "project": "group/project",
+                    "worktree_path": str(worktree),
+                    "dirty": False,
+                    "branch": "chatgpt/optimize-abc123",
+                    "head": "abc123",
+                    "base_sha": "base",
+                }
+            if "files" in args:
+                return {"workspace_id": "abc123def456", "path": ".", "items": [{"path": "src/perception/a.py", "type": "file", "size": 14}]}
+            if "read" in args:
+                return {"workspace_id": "abc123def456", "path": "src/perception/a.py", "content": "one\ntwo\nthree\n"}
+            if "diff" in args:
+                return {"workspace_id": "abc123def456", "base_sha": "base", "truncated": False, "original_bytes": 10, "diff": "diff --git a/a b/a\n+new\n"}
+            if "resume" in args:
+                return {"agent_prompt": "implement reviewed plan"}
+            raise AssertionError(args)
+
+        controller._run_json = fake_run
+        try:
+            ctrl = controller.BridgeController()
+            routed = ctrl.dispatch_request(
+                gitlab_url="https://gitlab.example.com/group/project",
+                module="src/perception",
+                request="Analyze and optimize latency",
+            )
+            assert routed["auto_routed"] is True
+            assert routed["project"] == "group/project"
+            assert routed["focus"] == "src/perception"
+            wid = routed["workspace_id"]
+            read = ctrl.read(workspace_id=wid, path="src/perception/a.py", start_line=2, end_line=3)
+            assert read["content"] == "2: two\n3: three"
+            diff = ctrl.diff(workspace_id=wid)
+            assert "+new" in diff["diff"]
+            artifacts = ctrl.artifacts(workspace_id=wid, path="reports", changed_only=False)
+            metric = next(item for item in artifacts["items"] if item["path"] == "reports/metrics.json")
+            assert "latency_ms" in metric["content"]
+            started = ctrl.start_codex(workspace_id=wid, goal="implement reviewed plan")
+            assert started["thread_id"] == "thr_test"
+            assert started["turn_id"] == "turn_test"
+            assert started["thread_name"].startswith("[ReasonFirst] group/project")
+            app = next(iter(ctrl._apps.values()))
+            assert app.goal == "implement reviewed plan"
+            assert app.metadata["branch"] == "chatgpt/optimize-abc123"
+            bundle = ctrl.review_bundle(thread_id="thr_test", artifact_path="reports")
+            assert bundle["artifacts"]["items"]
+            ctrl.close()
