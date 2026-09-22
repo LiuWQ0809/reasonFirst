@@ -98,3 +98,53 @@ class BridgeController:
             raise BridgeError(f"Could not read bridge state: {self.state_file}") from exc
         if not isinstance(data, dict) or int(data.get("version", 0)) not in {2, 3, 4}:
             raise BridgeError("Unsupported bridge state version")
+        if int(data.get("version", 0)) == 2:
+            data["version"] = 3
+            for ws in data.get("workspaces", {}).values():
+                if isinstance(ws, dict):
+                    ws.setdefault("kind", "local")
+                    ws.setdefault("target", {"type": "local", "name": "local", "codex_backend": "desktop-preferred"})
+            for session in data.get("sessions", {}).values():
+                if isinstance(session, dict):
+                    session.setdefault("target", {"type": "local", "name": "local", "codex_backend": "desktop-preferred"})
+        data["version"] = 3
+        data.setdefault("sessions", {})
+        data.setdefault("workspaces", {})
+        data.setdefault("finish_approvals", {})
+        return data
+
+    def _save_state(self) -> None:
+        payload = json.dumps(self._state, ensure_ascii=False, indent=2, sort_keys=True)
+        fd, temp_name = tempfile.mkstemp(prefix="state.", suffix=".tmp", dir=self.state_dir)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(payload); f.flush(); os.fsync(f.fileno())
+            os.replace(temp_name, self.state_file)
+            try: self.state_file.chmod(0o600)
+            except OSError: pass
+        finally:
+            if os.path.exists(temp_name): os.unlink(temp_name)
+
+    def _session(self, thread_id: str) -> dict[str, Any]:
+        session = self._state["sessions"].get(thread_id)
+        if not isinstance(session, dict):
+            raise BridgeError(f"Unknown thread_id: {thread_id}")
+        return session
+
+    def _workspace_record(self, wid: str) -> dict[str, Any]:
+        item = self._state.get("workspaces", {}).get(wid)
+        if not isinstance(item, dict):
+            raise BridgeError(f"Unknown bridge workspace_id: {wid}")
+        return item
+
+    def _target_from_dict(self, data: Any) -> ExecutionTarget:
+        return resolve_target(data, config=self.bridge_config)
+
+    def _remote_manager(self, target: ExecutionTarget) -> RemoteWorkspaceManager:
+        # Reuse the already-configured ReasonFirst Git credential for remote HTTPS
+        # fetches without persisting it on the target. The remote manager forwards
+        # it only after a credential-less fetch fails and only to the configured
+        # GitLab host.
+        try:
+            from gitlab_agent.config import AgentSettings
