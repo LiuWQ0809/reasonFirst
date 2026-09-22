@@ -48,3 +48,42 @@ def main() -> int:
     data = load_json(
         marketplace,
         {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []},
+    )
+    if not isinstance(data, dict):
+        data = {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []}
+    data.setdefault("name", "personal")
+    interface = data.get("interface")
+    if not isinstance(interface, dict):
+        interface = {}
+    interface.setdefault("displayName", "Personal")
+    data["interface"] = interface
+    plugins = data.get("plugins")
+    if not isinstance(plugins, list):
+        plugins = []
+    plugins = [p for p in plugins if not (isinstance(p, dict) and p.get("name") == "reasonfirst-v4")]
+    # Personal marketplace sources resolve from the home directory, not .agents/plugins.
+    rel = os.path.relpath(dst, marketplace.parent.parent.parent)
+    if not rel.startswith("./"):
+        rel = "./" + rel
+    plugins.append({
+        "name": "reasonfirst-v4",
+        "source": {"source": "local", "path": rel},
+        "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+        "category": "Developer Tools",
+    })
+    data["plugins"] = plugins
+    if marketplace.exists():
+        shutil.copy2(marketplace, marketplace.with_name(marketplace.name + ".backup." + datetime.now().strftime("%Y%m%d%H%M%S%f")))
+    marketplace.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        marketplace.chmod(0o600)
+    except OSError:
+        pass
+    print(f"Installed ChatGPT Desktop plugin: {dst}")
+    print(f"Updated personal plugin marketplace: {marketplace}")
+    print("Plugin source registered; configure_v4.sh installs and enables it with Codex CLI.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
