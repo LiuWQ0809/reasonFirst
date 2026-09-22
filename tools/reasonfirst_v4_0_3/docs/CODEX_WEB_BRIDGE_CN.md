@@ -98,3 +98,53 @@ The MCP command is:
 Do not expect a normal log stream when launching `run_reasonfirst.sh` manually without `--doctor`; an MCP STDIO server normally waits for JSON-RPC on stdin.
 
 ## ChatGPT Web via Secure MCP Tunnel
+
+Requirements: a Platform MCP tunnel id, tunnel permissions, ChatGPT developer-mode/app access, `tunnel-client`, and a runtime API key exported locally.
+
+```bash
+export CONTROL_PLANE_API_KEY='...'
+
+/path/to/reasonFirst/tools/codex_web_bridge/configure_v4_tunnel.sh \
+  tunnel_xxx
+
+/path/to/reasonFirst/tools/codex_web_bridge/run_v4_tunnel.sh
+```
+
+The tunnel is outbound-only. The Mac does not need an inbound public port.
+
+## ChatGPT-facing MCP tools
+
+Read / analysis:
+
+- `reasonfirst_doctor`
+- `reasonfirst_target_probe`
+- `reasonfirst_workspace_status`
+- `reasonfirst_files`
+- `reasonfirst_read`
+- `reasonfirst_diff`
+- `reasonfirst_codex_status`
+- `reasonfirst_codex_events`
+- `reasonfirst_review_bundle`
+- `reasonfirst_artifacts`
+
+Task / execution:
+
+- `reasonfirst_dispatch`
+- `reasonfirst_codex_start`
+- `reasonfirst_codex_continue`
+- `reasonfirst_codex_steer`
+- `reasonfirst_codex_interrupt`
+- `reasonfirst_authorize_push`
+
+## Normal workflow
+
+```text
+user request
+  ↓
+ChatGPT dispatches/prepares workspace
+  ↓
+ChatGPT reads real source and makes the plan
+  ↓
+ChatGPT starts Codex with the reviewed plan + acceptance criteria
+  ↓
+Codex edits and runs build/tests
