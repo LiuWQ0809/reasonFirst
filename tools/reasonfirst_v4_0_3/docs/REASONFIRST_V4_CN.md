@@ -148,3 +148,53 @@ ChatGPT reads real source and makes the plan
 ChatGPT starts Codex with the reviewed plan + acceptance criteria
   ↓
 Codex edits and runs build/tests
+  ↓
+ChatGPT reads review_bundle + real diff + artifacts
+  ↓
+(optional iterations)
+  ↓
+ChatGPT calls reasonfirst_authorize_push
+  ↓
+ReasonFirst pins the exact snapshot digest
+  ↓
+ChatGPT instructs existing Codex thread to push
+  ↓
+Codex calls reasonfirst_remote.commit_push
+```
+
+If the source changes after push approval, the digest changes and push is rejected. ChatGPT must review and authorize again.
+
+## Push safety
+
+Automatic remote push:
+
+- only `chatgpt/*` feature branches;
+- never force-push;
+- does not push `main` directly;
+- runs `git diff --check`;
+- blocks common secret/private-key paths;
+- scans obvious private-key / GitLab token / OpenAI-key patterns;
+- uses existing ReasonFirst GitLab credentials only through a temporary `GIT_ASKPASS` on the SSH channel;
+- does not persist GitLab credentials on the target;
+- requires an exact ChatGPT-reviewed snapshot digest.
+
+## Legacy GitHub relay
+
+Still available explicitly for rollback/audit only:
+
+```bash
+tools/codex_web_bridge/run_github_relay.sh
+```
+
+`run_reasonfirst.sh` never launches it in v4.
+
+## v4.0.1 startup bug fixed
+
+v4.0.1 could write a v4 `bridge.yaml` but still launch the v3 GitHub relay, producing:
+
+```text
+BridgeConfigError: Unsupported bridge config version
+```
+
+v4.0.2 fixes both sides:
+
