@@ -848,3 +848,53 @@ class BridgeController:
         for candidate in candidates:
             try:
                 payload=manager.read_bytes_b64(rec,str(candidate["path"]),max_bytes=16*1024*1024); raw=base64.b64decode(payload["base64"])
+                with tempfile.TemporaryDirectory(prefix="rf-artifact-") as td:
+                    root=Path(td); rel=Path(str(candidate["path"])); local=root/rel; local.parent.mkdir(parents=True,exist_ok=True); local.write_bytes(raw)
+                    scan=scan_artifacts(root,relative_path=str(rel),since_epoch=0,changed_only=False,max_entries=1,max_text_chars=max_text_chars,max_visual_previews=1 if previews<max_visual_previews else 0)
+                    entry=(scan.get("items") or [{}])[0]
+                    if isinstance(entry.get("content"),str): entry["content"]=redact(str(entry["content"]),40000)
+                    if entry.get("visual_preview"): previews+=1
+                    items.append(entry)
+            except Exception as exc:
+                items.append({**candidate,"extract_error":redact(str(exc),500)})
+        return {"ok":True,"workspace_id":wid,"path":path,"changed_only":changed_only,"since_epoch":since,"items":items,"truncated":len(candidates)>=max_entries,"visual_previews":previews}
+
+    def artifact_descriptor(self, *, path: str, workspace_id: str = "", thread_id: str = "", max_bytes: int = 8*1024*1024) -> dict[str, Any]:
+        wid=self._workspace_id(workspace_id=workspace_id,thread_id=thread_id); rec=self._workspace_record(wid)
+        if rec.get("kind") == "ssh":
+            target=self._target_from_dict(rec["target"]); data=self._remote_manager(target).read_bytes_b64(rec,path,max_bytes=max_bytes); return {"workspace_id":wid,"remote":True,"path":path,"size":data["size"],"base64":data["base64"],"target":target.to_dict()}
+        status=_run_json(_module_command("gitlab_agent.actual_coder_cli","status",wid),timeout=60); worktree=Path(self._assert_worktree_allowed(str(status.get("worktree_path") or ""))); return {"workspace_id":wid,**artifact_file(worktree,path,max_bytes=max_bytes)}
+
+    def review_bundle(self, *, thread_id: str, artifact_path: str = ".") -> dict[str, Any]:
+        session=self._session(thread_id); ev=self.events(thread_id=thread_id,limit=24); bounded=[]
+        for item in ev.get("events",[]):
+            if isinstance(item,dict):
+                copy=dict(item)
+                if isinstance(copy.get("output"),str): copy["output"]=redact(str(copy["output"]),1800)
+                bounded.append(copy)
+        diff=self.diff(thread_id=thread_id); diff["diff"]=redact(str(diff.get("diff") or ""),16000)
+        return {"ok":True,"thread_id":thread_id,"workspace_id":session["workspace_id"],"status":self.status(thread_id=thread_id),"events":{"events":bounded,"last_agent_message":redact(str(ev.get("last_agent_message") or ""),5000)},"diff":diff,"artifacts":self.artifacts(thread_id=thread_id,path=artifact_path,changed_only=True,max_entries=30,max_text_chars=12000,max_visual_previews=1)}
+
+    def ci(self, *, thread_id: str) -> dict[str, Any]:
+        rec=self._workspace_record(str(self._session(thread_id)["workspace_id"]))
+        if rec.get("kind")=="ssh" or self._git_only_mode(): raise BridgeError("CI inspection requires GitLab API authentication and a local ActualCoder workspace")
+        return _run_json(_module_command("gitlab_agent.actual_coder_cli","ci",str(rec["workspace_id"])),timeout=120,allow_failure_json=True)
+
+    def finish_preview(self, *, thread_id: str, message: str) -> dict[str, Any]:
+        session=self._session(thread_id); rec=self._workspace_record(str(session["workspace_id"]))
+        if rec.get("kind") == "ssh":
+            return {"ok":False,"remote_finish_supported":False,"workspace":self.workspace_status(thread_id=thread_id).get("workspace"),"diff":self.diff(thread_id=thread_id),"blockers":["v4 remote push is performed by Codex only after ChatGPT calls authorize_push for the exact reviewed snapshot; use that flow instead of finish."],"message":message}
+        result=_run_json(_module_command("gitlab_agent.actual_coder_cli","finish",str(session["workspace_id"]),"--message",message,"--dry-run"),timeout=600,allow_failure_json=True)
+        return {"ok":bool(result.get("ok")),"dry_run":True,"raw":result}
+
+    def finish(self, *, thread_id: str, message: str, snapshot_digest: str) -> dict[str, Any]:
+        session=self._session(thread_id); rec=self._workspace_record(str(session["workspace_id"]))
+        if rec.get("kind") == "ssh": raise BridgeError("Use v4 authorize_push + Codex reasonfirst_remote.commit_push for remote workspaces; no push was performed")
+        if os.getenv("RF_CODEX_REMOTE_FINISH","false").strip().lower() not in {"1","true","yes","on"}: raise BridgeError("Remote finish is disabled")
+        return _run_json(_module_command("gitlab_agent.actual_coder_cli","finish",str(session["workspace_id"]),"--message",message,"--yes"),timeout=600,allow_failure_json=True)
+
+    def _on_event(self, event: dict[str, Any], app_key: str) -> None:
+        method=str(event.get("method") or ""); params=event.get("params") if isinstance(event.get("params"),dict) else {}; thread_id=params.get("threadId") if isinstance(params,dict) else None
+        if not isinstance(thread_id,str) or not thread_id: thread_id=self._app_current_thread.get(app_key)
+        if not thread_id: return
+        with self._lock:
