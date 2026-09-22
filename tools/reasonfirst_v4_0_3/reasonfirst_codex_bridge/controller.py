@@ -698,3 +698,53 @@ class BridgeController:
                 "created_at": int(time.time()),
                 "updated_at": int(time.time()),
             }
+            self._app_current_thread[app_key] = thread_id
+            self._save_state()
+        turn_id = app.start_turn(
+            thread_id=thread_id,
+            cwd=codex_cwd,
+            prompt=prompt,
+            network_access=False if self._is_remote_proxy_target(target) else target.network_access,
+            sandbox_mode=sandbox_mode,
+        )
+        with self._lock:
+            self._state["sessions"][thread_id]["last_turn_id"] = turn_id
+            self._state["sessions"][thread_id]["last_turn_status"] = "inProgress"
+            self._save_state()
+        decorated = self._decorate_thread(
+            app=app,
+            thread_id=thread_id,
+            workspace=workspace,
+            project=str(rec.get("project") or ""),
+            task=str(rec.get("task") or "task"),
+            goal=goal,
+        )
+        return {
+            "ok": True,
+            "workspace_id": wid,
+            "worktree_path": remote_worktree,
+            "codex_cwd": codex_cwd,
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "thread_name": decorated["name"],
+            "thread_metadata_errors": decorated["errors"],
+            "execution": target.to_dict(),
+            "codex_backend": app.backend_name,
+            "remote_tools": bool(dynamic_tools),
+            "execution_migrated": execution_migrated,
+        }
+
+    def start(self, *, project: str, task: str, goal: str, base_ref: str = "", execution: Any = None) -> dict[str, Any]:
+        prepared=self.prepare(project=project,task=task,goal=goal,base_ref=base_ref,execution=execution)
+        started=self.start_codex(workspace_id=str(prepared["workspace_id"]),goal=goal)
+        return {**prepared, **started}
+
+    def _ensure_loaded(self, thread_id: str) -> tuple[dict[str, Any], AppServerClient]:
+        session=self._session(thread_id); key,app=self._app_for_session(session); self._app_current_thread[key]=thread_id; return session,app
+
+    def continue_task(self, *, thread_id: str, goal: str, from_ci: bool = False) -> dict[str, Any]:
+        if from_ci:
+            raise BridgeError("resume_from_ci is unavailable for dynamic/SSH targets unless GitLab API mode is configured")
+        session, app = self._ensure_loaded(thread_id)
+        rec = self._workspace_record(str(session["workspace_id"]))
+        target = self._target_from_dict(session["target"])
