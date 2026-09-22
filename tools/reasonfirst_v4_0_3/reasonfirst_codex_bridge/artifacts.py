@@ -98,3 +98,53 @@ def _extract_pdf(path: Path, max_chars: int, max_pages: int = 20) -> tuple[str, 
 
 def _image_preview(path: Path, *, max_base64_chars: int = 9000) -> dict[str, Any] | None:
     try:
+        from PIL import Image  # type: ignore
+    except Exception:
+        return None
+
+    image = None
+    if path.suffix.lower() == ".pdf":
+        try:
+            import fitz  # type: ignore
+            document = fitz.open(str(path))
+            if not document.page_count:
+                return None
+            page = document.load_page(0)
+            pix = page.get_pixmap(matrix=fitz.Matrix(1.0, 1.0), alpha=False)
+            image = Image.open(BytesIO(pix.tobytes("png")))
+        except Exception:
+            return None
+    else:
+        try:
+            image = Image.open(path)
+            try:
+                image.seek(0)
+            except Exception:
+                pass
+        except Exception:
+            return None
+
+    if image is None:
+        return None
+    try:
+        image = image.convert("RGB")
+        original = image.size
+        for side, quality in ((640, 50), (480, 45), (320, 40), (224, 35), (160, 30)):
+            preview = image.copy()
+            preview.thumbnail((side, side))
+            out = BytesIO()
+            preview.save(out, format="JPEG", quality=quality, optimize=True)
+            payload = base64.b64encode(out.getvalue()).decode("ascii")
+            if len(payload) <= max_base64_chars:
+                return {
+                    "mime_type": "image/jpeg",
+                    "width": preview.width,
+                    "height": preview.height,
+                    "source_width": original[0],
+                    "source_height": original[1],
+                    "bytes": len(out.getvalue()),
+                    "base64": payload,
+                }
+        return None
+    finally:
+        try:
