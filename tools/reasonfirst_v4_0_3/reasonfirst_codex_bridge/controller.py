@@ -898,3 +898,35 @@ class BridgeController:
         if not isinstance(thread_id,str) or not thread_id: thread_id=self._app_current_thread.get(app_key)
         if not thread_id: return
         with self._lock:
+            session=self._state.get("sessions",{}).get(thread_id)
+            if not isinstance(session,dict): return
+            summary=None
+            if method=="turn/started":
+                turn=params.get("turn") if isinstance(params,dict) else None
+                if isinstance(turn,dict): session["last_turn_id"]=turn.get("id") or session.get("last_turn_id"); session["last_turn_status"]=turn.get("status") or "inProgress"
+                summary={"method":method,"turn_id":session.get("last_turn_id")}
+            elif method=="turn/completed":
+                turn=params.get("turn") if isinstance(params,dict) else None
+                if isinstance(turn,dict): session["last_turn_status"]=turn.get("status"); session["last_turn_id"]=turn.get("id") or session.get("last_turn_id")
+                summary={"method":method,"turn_id":session.get("last_turn_id"),"status":session.get("last_turn_status")}
+            elif method=="item/agentMessage/delta":
+                delta=params.get("delta")
+                if isinstance(delta,str): session["last_agent_message"]=(str(session.get("last_agent_message") or "")+delta)[-20000:]
+            elif method=="item/completed":
+                item=params.get("item") if isinstance(params,dict) else None
+                if isinstance(item,dict):
+                    kind=item.get("type")
+                    if kind=="commandExecution": summary={"method":method,"type":kind,"status":item.get("status"),"exit_code":item.get("exitCode"),"duration_ms":item.get("durationMs"),"command":redact(str(item.get("command") or ""),500),"output":redact(str(item.get("aggregatedOutput") or ""),8000)}
+                    elif kind=="fileChange": summary={"method":method,"type":kind,"status":item.get("status")}
+                    elif kind=="agentMessage" and isinstance(item.get("text"),str): session["last_agent_message"]=str(item["text"])[-20000:]
+            elif method=="error": summary={"method":method,"message":redact(str(params.get("error")),2000)}
+            elif method.startswith("bridge/"): summary={"method":method,"params":params}
+            if summary is not None:
+                events=session.setdefault("events",[]); events.append({"ts":int(time.time()),**summary}); del events[:-100]
+            session["updated_at"]=int(time.time()); self._save_state()
+
+    def close(self) -> None:
+        for app in list(self._apps.values()):
+            try: app.close()
+            except Exception: pass
+        self._apps.clear()
