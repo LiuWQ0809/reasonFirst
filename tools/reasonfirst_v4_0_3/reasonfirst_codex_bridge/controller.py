@@ -298,3 +298,53 @@ class BridgeController:
             "type": "namespace",
             "name": "reasonfirst_remote",
             "description": "Operate only on the managed remote ReasonFirst worktree selected for this task.",
+            "tools": [
+                fn("status", "Read the remote Git worktree status and pinned branch/base information.", {}),
+                fn("files", "List files inside the remote managed worktree.", {
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "max_entries": {"type": "integer", "minimum": 1, "maximum": 500},
+                }),
+                fn("read", "Read one UTF-8 source/config/test file from the remote managed worktree.", {
+                    "path": {"type": "string"},
+                    "max_bytes": {"type": "integer", "minimum": 1, "maximum": 2097152},
+                }, ["path"]),
+                fn("write", "Replace one file inside the remote managed worktree. Parent directories may be created.", {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                }, ["path", "content"]),
+                fn("apply_patch", "Apply a unified Git patch to the remote managed worktree.", {
+                    "patch": {"type": "string"},
+                }, ["patch"]),
+                fn("run", "Run a build/test/inspection command on the remote host with cwd constrained to this worktree. Destructive/admin/network-hop commands are blocked.", {
+                    "command": {"type": "string"},
+                    "cwd": {"type": "string"},
+                    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 1800},
+                }, ["command"]),
+                fn("snapshot", "Read the exact remote review snapshot digest. Use before requesting ChatGPT push approval.", {}),
+                fn("commit_push", "Commit and push the exact ChatGPT-approved snapshot. This succeeds only after an explicit ReasonFirst push approval for the unchanged digest; force-push and protected branches are never allowed.", {}),
+                fn("diff", "Read the real remote Git diff against the pinned base SHA.", {}),
+            ],
+        }]
+
+    def _handle_dynamic_tool_request(self, app_key: str, msg: dict[str, Any]) -> dict[str, Any]:
+        if str(msg.get("method") or "") != "item/tool/call":
+            raise BridgeError("Unsupported dynamic server request")
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        thread_id = str(params.get("threadId") or "")
+        namespace = str(params.get("namespace") or "")
+        tool = str(params.get("tool") or "")
+        args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        if namespace != "reasonfirst_remote":
+            raise BridgeError(f"Unsupported dynamic tool namespace: {namespace!r}")
+        session = self._session(thread_id)
+        if str(session.get("app_key") or "") != app_key:
+            raise BridgeError("Dynamic tool request arrived on the wrong app-server")
+        rec = self._workspace_record(str(session["workspace_id"]))
+        if rec.get("kind") != "ssh":
+            raise BridgeError("ReasonFirst remote tools require an SSH workspace")
+        target = self._target_from_dict(rec.get("target") or {})
+        manager = self._remote_manager(target)
+        if tool == "status":
+            result = manager.status(rec)
+        elif tool == "files":
