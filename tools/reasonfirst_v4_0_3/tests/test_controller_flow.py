@@ -148,3 +148,12 @@ def main():
             bundle = ctrl.review_bundle(thread_id="thr_test", artifact_path="reports")
             assert bundle["artifacts"]["items"]
             ctrl.close()
+        finally:
+            controller.AppServerClient = original_app
+            controller._run_json = original_run
+
+    print("controller v3 local closed-loop flow: OK")
+
+
+if __name__ == "__main__":
+    main()
