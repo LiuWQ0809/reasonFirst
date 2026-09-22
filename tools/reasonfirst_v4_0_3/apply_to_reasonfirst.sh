@@ -59,6 +59,8 @@ Doctor:
 Local MCP URL: http://127.0.0.1:8765/mcp
 Web connector: private GitHub control Issue (forwarded to the same MCP process)
 Optional Secure MCP Tunnel uses RF_TUNNEL_ID and CONTROL_PLANE_API_KEY.
+Codex plugin access does not enable MCP tools in ordinary ChatGPT Web/App chats.
+ChatGPT direct access requires an MCP connection registered in ChatGPT.
 
 Manual Web relay command:
   $TARGET/run_github_relay.sh
