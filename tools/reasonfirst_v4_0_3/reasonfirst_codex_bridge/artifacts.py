@@ -198,3 +198,47 @@ def scan_artifacts(
             "kind": "visual" if ext in VISUAL_EXTENSIONS else ("document" if ext in DOCUMENT_EXTENSIONS else "text"),
         }
         try:
+            if ext in TEXT_EXTENSIONS and info.st_size <= 2 * 1024 * 1024 and text_remaining > 0:
+                cap = min(max_text_chars, text_remaining)
+                content, truncated = _read_text(path, cap)
+                entry["content"] = content
+                entry["content_truncated"] = truncated
+                text_remaining -= len(content)
+                if ext == ".json":
+                    try:
+                        json.loads(content)
+                        entry["structured"] = True
+                    except Exception:
+                        entry["structured"] = False
+            elif ext == ".docx" and info.st_size <= 8 * 1024 * 1024 and text_remaining > 0:
+                cap = min(max_text_chars, text_remaining)
+                content, truncated = _extract_docx(path, cap)
+                entry["content"] = content
+                entry["content_truncated"] = truncated
+                text_remaining -= len(content)
+            elif ext == ".pdf" and info.st_size <= 16 * 1024 * 1024:
+                cap = min(max_text_chars, text_remaining) if text_remaining > 0 else 0
+                content, truncated, page_count = _extract_pdf(path, cap) if cap else ("", False, 0)
+                entry["page_count"] = page_count
+                if content:
+                    entry["content"] = content
+                    entry["content_truncated"] = truncated
+                    text_remaining -= len(content)
+        except Exception as exc:
+            entry["extract_error"] = type(exc).__name__
+
+        if ext in VISUAL_EXTENSIONS and preview_count < max_visual_previews:
+            preview = _image_preview(path)
+            if preview:
+                entry["visual_preview"] = preview
+                preview_count += 1
+        items.append(entry)
+    return {
+        "path": relative_path,
+        "changed_only": changed_only,
+        "since_epoch": since_epoch,
+        "items": items,
+        "truncated": len(items) >= max_entries,
+        "visual_previews": preview_count,
+        "text_budget_remaining": text_remaining,
+    }
