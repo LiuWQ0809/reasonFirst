@@ -48,3 +48,38 @@ def test_dynamic_tool_roundtrip():
         }],
     }]
     tid = client.start_thread(cwd=str(ROOT), dynamic_tools=tools, sandbox_mode="read-only")
+    client.start_turn(thread_id=tid, cwd=str(ROOT), prompt="use tool", sandbox_mode="read-only")
+    time.sleep(0.15)
+    assert seen and seen[0].get("method") == "item/tool/call"
+    assert any(e.get("method") == "turn/completed" for e in events)
+    client.close()
+
+def main():
+    test_callback_failure_does_not_kill_reader()
+    test_dynamic_tool_roundtrip()
+    events = []
+    fake = str(ROOT / "tests" / "fake_codex.py")
+    client = AppServerClient(codex_bin=fake, event_handler=events.append)
+    tid = client.start_thread(cwd=str(ROOT))
+    turn = client.start_turn(thread_id=tid, cwd=str(ROOT), prompt="test")
+    client.set_thread_name(tid, "[ReasonFirst] group/project - optimize-src")
+    client.set_thread_goal(tid, "Keep tests green")
+    client.update_thread_metadata(tid, branch="chatgpt/task", sha="abc123", origin_url="https://gitlab.example/group/project.git")
+    time.sleep(0.05)
+    assert tid == "thr_fake"
+    assert turn == "turn_fake"
+    assert any(e.get("method") == "turn/completed" for e in events)
+    thread = client.read_thread(tid)["thread"]
+    assert thread["name"].startswith("[ReasonFirst]")
+    assert thread["isPinned"] is True
+    assert thread["gitInfo"]["branch"] == "chatgpt/task"
+    listed = client.list_threads(search_term="ReasonFirst")
+    assert listed["data"][0]["id"] == tid
+    client.steer(thread_id=tid, turn_id=turn, prompt="focus")
+    client.interrupt(thread_id=tid, turn_id=turn)
+    client.close()
+    print("app-server metadata smoke test: OK")
+
+
+if __name__ == "__main__":
+    main()
