@@ -98,3 +98,13 @@ def main() -> int:
         return 2
     root = Path(sys.argv[1]).expanduser().resolve()
     cli = root / "src/gitlab_agent/cli.py"
+    if not cli.is_file():
+        print(f"missing {cli}", file=sys.stderr)
+        return 2
+    changed = patch_cli(cli)
+    print("patched" if changed else "already-patched")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
