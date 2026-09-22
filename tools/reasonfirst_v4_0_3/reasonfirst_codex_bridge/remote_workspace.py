@@ -598,3 +598,23 @@ print(json.dumps(out))
             int(since_epoch), max(1, min(int(max_entries), 100)),
         )
         proc = self._ssh(cmd, timeout=60)
+        value = json.loads(proc.stdout.strip().splitlines()[-1])
+        return value if isinstance(value, list) else []
+
+    def read_bytes_b64(self, state: dict[str, Any], path: str, *, max_bytes: int = 8 * 1024 * 1024) -> dict[str, Any]:
+        rel = _safe_relative(path)
+        script = r'''
+import base64, json, pathlib, sys
+root=pathlib.Path(sys.argv[1]).resolve(); rel=sys.argv[2]; cap=int(sys.argv[3])
+p=(root/rel).resolve(); p.relative_to(root)
+if not p.is_file(): raise SystemExit("not a file")
+size=p.stat().st_size
+if size>cap: raise SystemExit(f"file too large: {size}>{cap}")
+raw=p.read_bytes()
+print(json.dumps({"path":rel,"size":size,"base64":base64.b64encode(raw).decode("ascii")}))
+'''
+        cmd = "python3 -c {} {} {} {}".format(
+            shlex.quote(script), shlex.quote(str(state["worktree_path"])), shlex.quote(rel), int(max_bytes),
+        )
+        proc = self._ssh(cmd, timeout=90)
+        return json.loads(proc.stdout.strip().splitlines()[-1])
