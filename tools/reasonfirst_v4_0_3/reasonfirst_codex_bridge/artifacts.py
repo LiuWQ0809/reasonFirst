@@ -148,3 +148,53 @@ def _image_preview(path: Path, *, max_base64_chars: int = 9000) -> dict[str, Any
         return None
     finally:
         try:
+            image.close()
+        except Exception:
+            pass
+
+
+def scan_artifacts(
+    root: Path,
+    *,
+    relative_path: str = ".",
+    since_epoch: int = 0,
+    changed_only: bool = True,
+    max_entries: int = 80,
+    max_text_chars: int = 20000,
+    max_visual_previews: int = 2,
+    total_text_chars: int = 24000,
+) -> dict[str, Any]:
+    base = root if relative_path in {"", ".", "./"} else _within(root, relative_path)
+    if not base.exists():
+        raise FileNotFoundError(relative_path)
+    iterator = [base] if base.is_file() else base.rglob("*")
+    items: list[dict[str, Any]] = []
+    preview_count = 0
+    text_remaining = max(0, int(total_text_chars))
+    for path in iterator:
+        if len(items) >= max_entries:
+            break
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            rel = path.resolve().relative_to(root.resolve())
+        except ValueError:
+            continue
+        if ".git" in rel.parts:
+            continue
+        ext = path.suffix.lower()
+        if ext not in SAFE_ARTIFACT_EXTENSIONS:
+            continue
+        info = path.stat()
+        if changed_only and since_epoch and info.st_mtime + 1 < since_epoch:
+            continue
+        entry: dict[str, Any] = {
+            "path": str(rel),
+            "name": path.name,
+            "extension": ext,
+            "size": info.st_size,
+            "modified_at": int(info.st_mtime),
+            "mime_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+            "kind": "visual" if ext in VISUAL_EXTENSIONS else ("document" if ext in DOCUMENT_EXTENSIONS else "text"),
+        }
+        try:
