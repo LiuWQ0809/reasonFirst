@@ -48,3 +48,53 @@ def _is_transient_gh_error(message: str) -> bool:
 
 
 def gh_json(
+    args: list[str],
+    *,
+    input_obj: dict[str, Any] | None = None,
+    max_attempts: int | None = None,
+) -> Any:
+    argv = ["gh", "api", *args]
+    payload = None
+    if input_obj is not None:
+        argv += ["--input", "-"]
+        payload = json.dumps(input_obj, ensure_ascii=False)
+
+    attempts = max(1, int(max_attempts or os.getenv("RF_GH_API_MAX_ATTEMPTS", "5")))
+    timeout_seconds = max(5.0, float(os.getenv("RF_GH_API_TIMEOUT_SECONDS", "30")))
+    last_error = ""
+
+    for attempt in range(1, attempts + 1):
+        try:
+            proc = subprocess.run(
+                argv,
+                input=payload,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            last_error = f"gh api timed out after {timeout_seconds:g}s"
+            transient = True
+        else:
+            if proc.returncode == 0:
+                text = proc.stdout.strip()
+                if not text:
+                    return None
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError as exc:
+                    last_error = f"gh api returned invalid JSON: {exc}"
+                    transient = True
+            else:
+                detail = (proc.stderr or proc.stdout or "gh api failed").strip()
+                last_error = f"gh api failed: {redact(detail, 2000)}"
+                transient = _is_transient_gh_error(detail)
+
+        if not transient or attempt >= attempts:
+            raise BridgeError(last_error)
+
+        delay = min(20.0, 1.0 * (2 ** (attempt - 1)))
+        print(
+            f"[reasonfirst] transient GitHub API error ({attempt}/{attempts}): "
+            f"{redact(last_error, 500)}; retrying in {delay:g}s",
