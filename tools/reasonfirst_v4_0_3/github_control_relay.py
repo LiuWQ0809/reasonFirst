@@ -248,3 +248,53 @@ def dispatch(ctrl: BridgeController, command: dict[str, Any], *, control_repo: s
             thread_id=str(command["thread_id"]),
             artifact_path=str(command.get("artifact_path") or "."),
         )
+    if op == "workspace_status":
+        return ctrl.workspace_status(
+            workspace_id=str(command.get("workspace_id") or ""),
+            thread_id=str(command.get("thread_id") or ""),
+        )
+    if op == "start_codex":
+        return ctrl.start_codex(
+            workspace_id=str(command["workspace_id"]),
+            goal=str(command["goal"]),
+        )
+    if op == "start":
+        return ctrl.start(
+            project=str(command["project"]),
+            task=str(command.get("task") or "chatgpt-task"),
+            goal=str(command["goal"]),
+            base_ref=str(command.get("base_ref") or ""),
+            execution=command.get("execution"),
+        )
+    if op == "continue":
+        return ctrl.continue_task(thread_id=str(command["thread_id"]), goal=str(command["goal"]), from_ci=False)
+    if op == "resume_from_ci":
+        return ctrl.continue_task(thread_id=str(command["thread_id"]), goal=str(command["goal"]), from_ci=True)
+    if op == "steer":
+        return ctrl.steer(thread_id=str(command["thread_id"]), prompt=str(command["prompt"]), turn_id=str(command.get("turn_id") or ""))
+    if op == "interrupt":
+        return ctrl.interrupt(thread_id=str(command["thread_id"]), turn_id=str(command.get("turn_id") or ""))
+    if op == "status":
+        return ctrl.status(thread_id=str(command["thread_id"]))
+    if op == "events":
+        return ctrl.events(thread_id=str(command["thread_id"]), limit=int(command.get("limit") or 30))
+    if op == "ci":
+        return ctrl.ci(thread_id=str(command["thread_id"]))
+    if op == "finish_preview":
+        return ctrl.finish_preview(thread_id=str(command["thread_id"]), message=str(command["message"]))
+    if op == "finish":
+        return ctrl.finish(thread_id=str(command["thread_id"]), message=str(command["message"]), snapshot_digest=str(command["snapshot_digest"]))
+    raise BridgeError(f"Unsupported op: {op!r}")
+
+
+def call_local(command: dict[str, Any], *, control_repo: str = "") -> dict[str, Any]:
+    """Forward Web commands to the one MCP daemon so all surfaces share one state."""
+    state = Path(os.getenv("RF_CODEX_BRIDGE_STATE_DIR", "~/.local/share/reasonfirst/codex-web-bridge")).expanduser()
+    token = (state / "control-token").read_text(encoding="ascii").strip()
+    payload = json.dumps({"command": command, "control_repo": control_repo}).encode("utf-8")
+    port = int(os.getenv("RF_MCP_PORT", "8765"))
+    request = Request(f"http://127.0.0.1:{port}/control", data=payload,
+                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+    try:
+        with urlopen(request, timeout=900) as response:
+            result = json.load(response)
