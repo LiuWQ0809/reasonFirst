@@ -198,3 +198,5 @@ BridgeConfigError: Unsupported bridge config version
 
 v4.0.2 fixes both sides:
 
+- `bridge_config.py` accepts/migrates v3 and v4 config;
+- `run_reasonfirst.sh` launches MCP only.
