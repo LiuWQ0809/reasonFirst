@@ -198,3 +198,38 @@ def build_server():
         )
 
     @server.tool(name="reasonfirst_authorize_push", annotations=write)
+    def reasonfirst_authorize_push(thread_id: str, commit_message: str) -> dict[str, Any]:
+        """After ChatGPT reviews the final diff/tests, authorize Codex to commit/push exactly that unchanged snapshot."""
+        return ctrl.authorize_push(thread_id=thread_id, commit_message=commit_message)
+
+    # Keep controller alive for the process lifetime. MCPServer does not own it.
+    setattr(server, "_reasonfirst_controller", ctrl)
+    return server
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="ReasonFirst v4 MCP server")
+    parser.add_argument("--doctor", action="store_true", help="print local doctor JSON and exit")
+    parser.add_argument("--stdio", action="store_true", help="legacy direct MCP transport")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--path", default="/mcp")
+    args = parser.parse_args(argv)
+    if args.doctor:
+        return _doctor()
+    server = build_server()
+    try:
+        if args.stdio:
+            server.run(transport="stdio")
+        else:
+            server.run(transport="streamable-http", host=args.host, port=args.port,
+                       streamable_http_path=args.path)
+        return 0
+    finally:
+        ctrl = getattr(server, "_reasonfirst_controller", None)
+        if ctrl is not None:
+            ctrl.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
