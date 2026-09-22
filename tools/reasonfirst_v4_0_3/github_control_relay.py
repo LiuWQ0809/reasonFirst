@@ -198,3 +198,53 @@ def dispatch(ctrl: BridgeController, command: dict[str, Any], *, control_repo: s
             intent=str(command.get("intent") or "analyze-optimize"),
             base_ref=str(command.get("base_ref") or ""),
             execution=command.get("execution"),
+        )
+    if op == "prepare":
+        return ctrl.prepare(
+            project=str(command["project"]),
+            task=str(command.get("task") or "chatgpt-analysis"),
+            goal=str(command.get("goal") or "Prepare repository for ChatGPT analysis only; do not modify files."),
+            base_ref=str(command.get("base_ref") or ""),
+            execution=command.get("execution"),
+        )
+    if op == "files":
+        return ctrl.files(
+            workspace_id=str(command.get("workspace_id") or ""),
+            thread_id=str(command.get("thread_id") or ""),
+            path=str(command.get("path") or "."),
+            recursive=bool(command.get("recursive", False)),
+            max_entries=int(command.get("max_entries") or 300),
+        )
+    if op == "read":
+        return ctrl.read(
+            workspace_id=str(command.get("workspace_id") or ""),
+            thread_id=str(command.get("thread_id") or ""),
+            path=str(command["path"]),
+            start_line=int(command.get("start_line") or 1),
+            end_line=int(command.get("end_line") or 0),
+            max_chars=int(command.get("max_chars") or 32000),
+        )
+    if op == "diff":
+        return ctrl.diff(
+            workspace_id=str(command.get("workspace_id") or ""),
+            thread_id=str(command.get("thread_id") or ""),
+        )
+    if op == "artifacts":
+        return ctrl.artifacts(
+            workspace_id=str(command.get("workspace_id") or ""),
+            thread_id=str(command.get("thread_id") or ""),
+            path=str(command.get("path") or "."),
+            changed_only=bool(command.get("changed_only", True)),
+            max_entries=int(command.get("max_entries") or 80),
+            max_text_chars=int(command.get("max_text_chars") or 20000),
+            max_visual_previews=int(command.get("max_visual_previews") or 2),
+        )
+    if op == "publish_artifact":
+        if not control_repo:
+            raise BridgeError("control repository is required to publish artifacts")
+        return publish_artifact(control_repo, ctrl, command)
+    if op == "review_bundle":
+        return ctrl.review_bundle(
+            thread_id=str(command["thread_id"]),
+            artifact_path=str(command.get("artifact_path") or "."),
+        )
