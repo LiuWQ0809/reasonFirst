@@ -48,3 +48,53 @@ def artifact_file(root: Path, relative: str, *, max_bytes: int = 8 * 1024 * 1024
         raise ValueError(f"artifact is too large to publish: {info.st_size} bytes > {max_bytes}")
     mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return {
+        "absolute_path": str(path),
+        "path": str(path.relative_to(root)),
+        "name": path.name,
+        "extension": ext,
+        "size": info.st_size,
+        "mime_type": mime,
+    }
+
+
+def _read_text(path: Path, max_chars: int) -> tuple[str, bool]:
+    raw = path.read_bytes()
+    text = raw.decode("utf-8", errors="replace")
+    return text[:max_chars], len(text) > max_chars
+
+
+def _extract_docx(path: Path, max_chars: int) -> tuple[str, bool]:
+    with zipfile.ZipFile(path) as archive:
+        raw = archive.read("word/document.xml")
+    root = ET.fromstring(raw)
+    chunks: list[str] = []
+    for node in root.iter():
+        if node.tag.endswith("}t") and node.text:
+            chunks.append(node.text)
+        elif node.tag.endswith("}p"):
+            chunks.append("\n")
+    text = "".join(chunks).strip()
+    return text[:max_chars], len(text) > max_chars
+
+
+def _extract_pdf(path: Path, max_chars: int, max_pages: int = 20) -> tuple[str, bool, int]:
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception:
+        return "", False, 0
+    reader = PdfReader(str(path))
+    chunks: list[str] = []
+    pages = min(len(reader.pages), max_pages)
+    for page in reader.pages[:pages]:
+        try:
+            chunks.append(page.extract_text() or "")
+        except Exception:
+            chunks.append("")
+        if sum(len(c) for c in chunks) >= max_chars:
+            break
+    text = "\n\n".join(chunks)
+    return text[:max_chars], len(text) > max_chars or len(reader.pages) > pages, len(reader.pages)
+
+
+def _image_preview(path: Path, *, max_base64_chars: int = 9000) -> dict[str, Any] | None:
+    try:
