@@ -98,3 +98,53 @@ def resolve_target(spec: Any = None, *, config: dict[str, Any] | None = None) ->
         spec = str(defaults.get("target") or "local")
 
     if isinstance(spec, str):
+        shorthand = _parse_ssh_shorthand(spec)
+        if shorthand is not None:
+            return shorthand
+        named = targets.get(spec)
+        if named is None:
+            if spec == "local":
+                named = {"type": "local"}
+            else:
+                raise BridgeConfigError(
+                    f"Unknown execution target {spec!r}. Define it in {config_path()} or pass an SSH target object."
+                )
+        if not isinstance(named, dict):
+            raise BridgeConfigError(f"Target {spec!r} must be a YAML object")
+        raw = dict(named)
+        raw.setdefault("name", spec)
+    elif isinstance(spec, dict):
+        raw = dict(spec)
+        raw.setdefault("name", str(raw.get("host") or raw.get("type") or "task-target"))
+    else:
+        raise BridgeConfigError("execution target must be a name, SSH shorthand, object, or omitted")
+
+    kind = str(raw.get("type") or "local").strip().lower()
+    if kind not in {"local", "ssh"}:
+        raise BridgeConfigError(f"Unsupported execution target type: {kind!r}")
+    backend_default = str(defaults.get("codex_backend") or "global-config-local")
+    allowed = {
+        "global-config-local",
+        "desktop-proxy",
+        "desktop-preferred",
+        "desktop-required",
+        "desktop-managed",
+        "standalone-local",
+        "remote-ssh",
+    }
+    if kind == "local":
+        backend = str(raw.get("codex_backend") or backend_default)
+        if backend not in allowed:
+            raise BridgeConfigError(f"Unsupported local codex_backend: {backend!r}")
+        return ExecutionTarget(
+            type="local",
+            name=str(raw.get("name") or "local"),
+            codex_backend=backend,
+            network_access=bool(raw.get("network_access", False)),
+        )
+
+    host = str(raw.get("host") or "").strip()
+    repo = str(raw.get("repo") or raw.get("project_root") or "").strip()
+    if not host or host.startswith("-"):
+        raise BridgeConfigError("SSH target requires a valid host/SSH alias")
+    if not repo.startswith("/"):
