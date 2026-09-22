@@ -248,3 +248,53 @@ class AppServerClient:
             "--",
             host,
             remote_command,
+        ]
+        return cls(
+            launch_argv=argv,
+            backend_name=f"ssh:{host}",
+            event_handler=event_handler,
+            server_request_handler=server_request_handler,
+        )
+
+    def _connect_unix_socket(self, socket_path: str) -> None:
+        try:
+            from websockets.sync.client import unix_connect
+        except Exception as exc:  # pragma: no cover - dependency checked by launcher
+            raise AppServerError(
+                "Desktop-managed mode requires the 'websockets' Python package"
+            ) from exc
+        try:
+            self.ws = unix_connect(
+                path=socket_path,
+                uri="ws://localhost/rpc",
+                open_timeout=5,
+                close_timeout=2,
+                max_size=16 * 1024 * 1024,
+            )
+        except Exception as exc:
+            raise AppServerError(f"Could not connect to managed app-server socket {socket_path}: {exc}") from exc
+
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        if not self.event_handler:
+            return
+        try:
+            self.event_handler(event)
+        except Exception as exc:
+            self._stderr_tail.append(
+                f"bridge event handler error: {type(exc).__name__}: {str(exc)[:500]}"
+            )
+            del self._stderr_tail[:-20]
+
+    def _read_stderr(self) -> None:
+        if self.proc is None or self.proc.stderr is None:
+            return
+        for line in self.proc.stderr:
+            text = line.rstrip("\r\n")
+            if text:
+                self._stderr_tail.append(text[:2000])
+                del self._stderr_tail[:-20]
+
+    def _is_running(self) -> bool:
+        if self._closed:
+            return False
+        if self.ws is not None:
