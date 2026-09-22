@@ -48,3 +48,9 @@ done
 if [ "$loaded" != true ]; then echo "Failed to load $LABEL" >&2; exit 1; fi
 launchctl enable "gui/$UID_NUM/$LABEL" >/dev/null 2>&1 || true
 launchctl kickstart -k "gui/$UID_NUM/$LABEL"
+
+echo "Installed and started $LABEL"
+echo "Plist: $PLIST"
+echo "MCP URL: http://${RF_MCP_HOST:-127.0.0.1}:${RF_MCP_PORT:-8765}${RF_MCP_PATH:-/mcp}"
+echo "Logs: $LOG_DIR/v4-mcp.stdout.log and $LOG_DIR/v4-mcp.stderr.log"
+echo "Status: launchctl print gui/$UID_NUM/$LABEL"
