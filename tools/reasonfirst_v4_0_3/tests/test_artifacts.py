@@ -48,3 +48,5 @@ def main():
     print("artifact extraction/preview flow: OK")
 
 
+if __name__ == "__main__":
+    main()
