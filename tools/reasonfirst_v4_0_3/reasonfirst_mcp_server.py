@@ -98,3 +98,53 @@ def build_server():
         )
 
     @server.tool(name="reasonfirst_workspace_status", annotations=read)
+    def reasonfirst_workspace_status(workspace_id: str = "", thread_id: str = "") -> dict[str, Any]:
+        """Read the managed workspace branch/base/dirty state."""
+        return ctrl.workspace_status(workspace_id=workspace_id, thread_id=thread_id)
+
+    @server.tool(name="reasonfirst_files", annotations=read)
+    def reasonfirst_files(
+        workspace_id: str = "",
+        thread_id: str = "",
+        path: str = ".",
+        recursive: bool = False,
+        max_entries: int = 300,
+    ) -> dict[str, Any]:
+        """List files in the managed source-of-truth workspace."""
+        return ctrl.files(
+            workspace_id=workspace_id,
+            thread_id=thread_id,
+            path=path,
+            recursive=recursive,
+            max_entries=max_entries,
+        )
+
+    @server.tool(name="reasonfirst_read", annotations=read)
+    def reasonfirst_read(
+        path: str,
+        workspace_id: str = "",
+        thread_id: str = "",
+        start_line: int = 1,
+        end_line: int = 0,
+        max_chars: int = 32000,
+    ) -> dict[str, Any]:
+        """Read one source/config/test file from the managed workspace."""
+        return ctrl.read(
+            workspace_id=workspace_id,
+            thread_id=thread_id,
+            path=path,
+            start_line=start_line,
+            end_line=end_line,
+            max_chars=max_chars,
+        )
+
+    @server.tool(name="reasonfirst_diff", annotations=read)
+    def reasonfirst_diff(workspace_id: str = "", thread_id: str = "") -> dict[str, Any]:
+        """Read the real Git diff against the pinned base SHA."""
+        return ctrl.diff(workspace_id=workspace_id, thread_id=thread_id)
+
+    @server.tool(name="reasonfirst_codex_start", annotations=write)
+    def reasonfirst_codex_start(workspace_id: str, goal: str) -> dict[str, Any]:
+        """Start Codex only after ChatGPT has reviewed source and defined a concrete implementation/test plan."""
+        return ctrl.start_codex(workspace_id=workspace_id, goal=goal)
+
