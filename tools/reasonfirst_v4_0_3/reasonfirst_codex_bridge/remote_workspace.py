@@ -498,3 +498,53 @@ print(json.dumps({"head":head,"branch":branch,"digest":h.hexdigest(),"dirty":boo
         if not message or len(message) > 240 or "\n" in message or "\r" in message:
             raise RemoteWorkspaceError("commit message must be one non-empty line up to 240 characters")
         snap = self.snapshot(state)
+        if not snap.get("dirty"):
+            raise RemoteWorkspaceError("workspace has no changes to commit")
+        if str(snap.get("digest") or "") != str(expected_digest or ""):
+            raise RemoteWorkspaceError(
+                "workspace changed after ChatGPT push approval; review the new diff and approve again"
+            )
+        branch = str(snap.get("branch") or "")
+        if not branch.startswith("chatgpt/"):
+            raise RemoteWorkspaceError(f"automatic push is allowed only from chatgpt/* branches, got {branch!r}")
+        paths = [str(x) for x in (snap.get("changed_paths") or [])]
+        reason = self._push_path_block_reason(paths)
+        if reason:
+            raise RemoteWorkspaceError(reason)
+
+        wt = shlex.quote(str(state["worktree_path"]))
+        qmessage = shlex.quote(message)
+        gate = r'''
+set -eu
+wt=__WT__
+git -C "$wt" diff --check HEAD --
+python3 - "$wt" <<'PYRF'
+import pathlib,re,subprocess,sys
+root=pathlib.Path(sys.argv[1]).resolve()
+patterns=[
+ re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+ re.compile(rb"glpat-[A-Za-z0-9_-]{12,}"),
+ re.compile(rb"sk-[A-Za-z0-9_-]{16,}"),
+]
+blob=subprocess.check_output(["git","-C",str(root),"diff","--binary","HEAD","--"])
+for pat in patterns:
+ if pat.search(blob): raise SystemExit("secret-like material detected in diff")
+for raw in subprocess.check_output(["git","-C",str(root),"ls-files","--others","--exclude-standard","-z"]).split(b"\0"):
+ if not raw: continue
+ p=(root/raw.decode("utf-8",errors="surrogateescape")).resolve(); p.relative_to(root)
+ if p.is_file() and p.stat().st_size <= 2*1024*1024:
+  data=p.read_bytes()
+  for pat in patterns:
+   if pat.search(data): raise SystemExit(f"secret-like material detected in {p.name}")
+PYRF
+git -C "$wt" add -A
+git -C "$wt" diff --cached --check
+git -C "$wt" commit -m __MSG__
+git -C "$wt" rev-parse HEAD
+'''.replace("__WT__", wt).replace("__MSG__", qmessage)
+        committed = self._ssh(gate, timeout=180, check=False)
+        if committed.returncode != 0:
+            raise RemoteWorkspaceError(
+                f"commit safety/commit step failed (exit {committed.returncode}): {committed.stderr[-3000:]}"
+            )
+        commit_sha = committed.stdout.strip().splitlines()[-1]
