@@ -48,3 +48,19 @@ chmod +x \
   "$TARGET/configure_gitlab_password.sh" "$TARGET/github_control_relay.py" "$TARGET/run_github_relay.sh" \
   "$TARGET/configure_v3_legacy.sh"
 
+cat <<EOF
+Installed ReasonFirst v4.0.3 to: $TARGET
+
+Primary execution state: one local MCP process
+Unified configuration and startup:
+  $TARGET/configure_v4.sh
+Doctor:
+  $TARGET/run_reasonfirst.sh --doctor
+Local MCP URL: http://127.0.0.1:8765/mcp
+Web connector: private GitHub control Issue (forwarded to the same MCP process)
+Optional Secure MCP Tunnel uses RF_TUNNEL_ID and CONTROL_PLANE_API_KEY.
+
+Manual Web relay command:
+  $TARGET/run_github_relay.sh
+EOF
+"$TARGET/configure_v4.sh"
