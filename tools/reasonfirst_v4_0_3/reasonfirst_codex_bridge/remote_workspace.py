@@ -198,3 +198,53 @@ printf '{{"workspace_id":"%s","worktree_path":"%s","base_sha":"%s","branch":"%s"
         except json.JSONDecodeError as exc:
             raise RemoteWorkspaceError(f"Remote workspace creation returned invalid JSON: {line!r}") from exc
         data.update({
+            "project": project,
+            "base_ref": base,
+            "target": self.target.to_dict(),
+            "created_at": int(time.time()),
+            "kind": "ssh",
+            "git_auth_forwarded": auth_forwarded,
+        })
+        return data
+
+    def status(self, state: dict[str, Any]) -> dict[str, Any]:
+        wt = str(state["worktree_path"])
+        qwt = shlex.quote(wt)
+        cmd = f"""
+set -eu
+wt={qwt}
+head=$(git -C "$wt" rev-parse HEAD)
+branch=$(git -C "$wt" branch --show-current)
+dirty=false
+if [ -n "$(git -C "$wt" status --porcelain)" ]; then dirty=true; fi
+printf '{{"head":"%s","branch":"%s","dirty":%s}}\n' "$head" "$branch" "$dirty"
+"""
+        data = json.loads(self._ssh(cmd, timeout=30).stdout.strip().splitlines()[-1])
+        return {**state, **data}
+
+    def list_files(self, state: dict[str, Any], path: str = ".", *, recursive: bool = False, max_entries: int = 300) -> dict[str, Any]:
+        rel = _safe_relative(path)
+        script = r'''
+import json, os, pathlib, sys
+root = pathlib.Path(sys.argv[1]).resolve()
+rel = sys.argv[2]
+recursive = sys.argv[3] == "1"
+limit = int(sys.argv[4])
+target = (root / rel).resolve()
+target.relative_to(root)
+items=[]
+if target.is_file():
+    st=target.stat(); items.append({"path":str(target.relative_to(root)),"type":"file","size":st.st_size})
+elif target.is_dir():
+    it = target.rglob("*") if recursive else target.iterdir()
+    for p in it:
+        try:
+            rp=p.resolve(); rp.relative_to(root)
+        except Exception: continue
+        kind="dir" if p.is_dir() else "file" if p.is_file() else "other"
+        size=p.stat().st_size if p.is_file() else None
+        items.append({"path":str(p.relative_to(root)),"type":kind,"size":size})
+        if len(items)>=limit: break
+else:
+    raise SystemExit("path does not exist")
+print(json.dumps({"path":rel,"items":items,"truncated":len(items)>=limit}))
