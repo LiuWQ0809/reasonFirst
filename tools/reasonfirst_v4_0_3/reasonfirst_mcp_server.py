@@ -148,3 +148,53 @@ def build_server():
         """Start Codex only after ChatGPT has reviewed source and defined a concrete implementation/test plan."""
         return ctrl.start_codex(workspace_id=workspace_id, goal=goal)
 
+    @server.tool(name="reasonfirst_codex_continue", annotations=write)
+    def reasonfirst_codex_continue(thread_id: str, goal: str) -> dict[str, Any]:
+        """Give the existing Codex executor the next reviewed implementation/test instruction."""
+        return ctrl.continue_task(thread_id=thread_id, goal=goal)
+
+    @server.tool(name="reasonfirst_codex_steer", annotations=write)
+    def reasonfirst_codex_steer(thread_id: str, prompt: str, turn_id: str = "") -> dict[str, Any]:
+        """Steer an active Codex turn without creating a new workspace."""
+        return ctrl.steer(thread_id=thread_id, prompt=prompt, turn_id=turn_id)
+
+    @server.tool(name="reasonfirst_codex_interrupt", annotations=write)
+    def reasonfirst_codex_interrupt(thread_id: str, turn_id: str = "") -> dict[str, Any]:
+        """Interrupt the active Codex turn while preserving the workspace/thread."""
+        return ctrl.interrupt(thread_id=thread_id, turn_id=turn_id)
+
+    @server.tool(name="reasonfirst_codex_status", annotations=read)
+    def reasonfirst_codex_status(thread_id: str) -> dict[str, Any]:
+        """Return a compact Codex/workspace status without replaying full thread history."""
+        return ctrl.compact_status(thread_id=thread_id)
+
+    @server.tool(name="reasonfirst_codex_events", annotations=read)
+    def reasonfirst_codex_events(thread_id: str, limit: int = 20) -> dict[str, Any]:
+        """Return only recent compact Codex execution events."""
+        return ctrl.events(thread_id=thread_id, limit=min(limit, 50))
+
+    @server.tool(name="reasonfirst_review_bundle", annotations=read)
+    def reasonfirst_review_bundle(thread_id: str, artifact_path: str = ".") -> dict[str, Any]:
+        """Return bounded status, recent evidence, real diff, and changed artifacts for ChatGPT review."""
+        return ctrl.review_bundle(thread_id=thread_id, artifact_path=artifact_path)
+
+    @server.tool(name="reasonfirst_artifacts", annotations=read)
+    def reasonfirst_artifacts(
+        workspace_id: str = "",
+        thread_id: str = "",
+        path: str = ".",
+        changed_only: bool = True,
+        max_entries: int = 30,
+    ) -> dict[str, Any]:
+        """Extract changed logs/reports/JSON/images/PDF/DOCX from the managed workspace."""
+        return ctrl.artifacts(
+            workspace_id=workspace_id,
+            thread_id=thread_id,
+            path=path,
+            changed_only=changed_only,
+            max_entries=max_entries,
+            max_text_chars=12000,
+            max_visual_previews=1,
+        )
+
+    @server.tool(name="reasonfirst_authorize_push", annotations=write)
