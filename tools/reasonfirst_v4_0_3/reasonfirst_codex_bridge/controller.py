@@ -148,3 +148,53 @@ class BridgeController:
         # GitLab host.
         try:
             from gitlab_agent.config import AgentSettings
+            settings = AgentSettings.load()
+            host = (urlparse(settings.gitlab_base_url).hostname or "").lower()
+            return RemoteWorkspaceManager(
+                target,
+                gitlab_host=host,
+                git_username=settings.git_username,
+                git_password=settings.git_token,
+            )
+        except Exception:
+            return RemoteWorkspaceManager(target)
+
+    def _is_remote_proxy_target(self, target: ExecutionTarget) -> bool:
+        return target.type == "ssh" and target.codex_backend != "remote-ssh"
+
+    @staticmethod
+    def _probe_remote_codex_path(probe: dict[str, Any]) -> str:
+        stdout = str(probe.get("stdout") or "")
+        for line in stdout.splitlines():
+            if line.startswith("codex="):
+                return line.split("=", 1)[1].strip()
+        return ""
+
+    def _migrate_legacy_remote_target_if_needed(
+        self, workspace_id: str, rec: dict[str, Any], target: ExecutionTarget
+    ) -> tuple[ExecutionTarget, bool]:
+        """Reuse v3.0.2 SSH workspaces when the remote host has no Codex.
+
+        v3.0.2 stored SSH targets as ``remote-ssh``. v3.0.3 defaults to a
+        local Desktop/app-server proxy. When an existing workspace still says
+        ``remote-ssh`` but the target has no Codex binary, transparently migrate
+        only the execution backend; the remote worktree, branch and base SHA stay
+        untouched.
+        """
+        if rec.get("kind") != "ssh" or target.codex_backend != "remote-ssh":
+            return target, False
+        probe = self._remote_manager(target).probe()
+        if self._probe_remote_codex_path(probe):
+            return target, False
+        migrated = ExecutionTarget(
+            type="ssh",
+            name=target.name,
+            host=target.host,
+            repo=target.repo,
+            codex_backend="desktop-proxy",
+            remote_codex=target.remote_codex,
+            ssh_connect_timeout=target.ssh_connect_timeout,
+            network_access=False,
+        )
+        with self._lock:
+            rec["target"] = migrated.to_dict()
