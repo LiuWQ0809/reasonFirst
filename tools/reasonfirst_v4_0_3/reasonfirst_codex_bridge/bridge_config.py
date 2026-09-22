@@ -148,3 +148,17 @@ def resolve_target(spec: Any = None, *, config: dict[str, Any] | None = None) ->
     if not host or host.startswith("-"):
         raise BridgeConfigError("SSH target requires a valid host/SSH alias")
     if not repo.startswith("/"):
+        raise BridgeConfigError("SSH target requires an absolute repo path")
+    ssh_backend = str(raw.get("codex_backend") or "desktop-proxy").strip() or "desktop-proxy"
+    if ssh_backend not in allowed:
+        raise BridgeConfigError(f"Unsupported SSH codex_backend: {ssh_backend!r}")
+    return ExecutionTarget(
+        type="ssh",
+        name=str(raw.get("name") or host),
+        host=host,
+        repo=repo,
+        codex_backend=ssh_backend,
+        remote_codex=str(raw.get("remote_codex") or "codex").strip() or "codex",
+        ssh_connect_timeout=max(1, min(int(raw.get("ssh_connect_timeout") or 8), 30)),
+        network_access=bool(raw.get("network_access", False)),
+    )
